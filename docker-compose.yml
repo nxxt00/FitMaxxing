@@ -1,0 +1,23 @@
+services:
+  posture-app:
+    build: .
+    container_name: posture-app
+    ports:
+      - "3000:3000"
+    volumes:
+      - posture-data:/app/data
+    networks:
+      - default
+      - nginx_default
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/app/data/posture.db
+
+volumes:
+  posture-data:
+
+networks:
+  default:
+  nginx_default:
+    external: true

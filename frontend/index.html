@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Posture Power - Apex Edition</title>
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #131825;
+            --bg-tertiary: #1c2237;
+            --border: #2a3148;
+            --text-primary: #e4e6f0;
+            --text-secondary: #9ca3b8;
+            --text-muted: #6b7280;
+            --accent-primary: #d4af37;
+            --accent-secondary: #f4d03f;
+            --accent-gradient: linear-gradient(135deg, #d4af37 0%, #f4d03f 100%);
+            --legend-gradient: linear-gradient(135deg, #7c3aed 0%, #ec4899 100%);
+            --rarity-common: #9ca3b8;
+            --rarity-rare: #3b82f6;
+            --rarity-epic: #a855f7;
+            --rarity-legendary: #f59e0b;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
+            --shadow-md: 0 8px 24px rgba(0,0,0,0.4);
+            --shadow-lg: 0 16px 48px rgba(0,0,0,0.5);
+            --sidebar-width: 300px;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f8f9fb;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #f1f3f7;
+            --border: #e4e6ed;
+            --text-primary: #1a1d2e;
+            --text-secondary: #5a6072;
+            --text-muted: #8b91a1;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .app-layout {
+            display: grid;
+            grid-template-columns: var(--sidebar-width) 1fr var(--sidebar-width);
+            gap: 16px;
+            padding: 16px;
+            max-width: 1800px;
+            margin: 0 auto;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            position: sticky;
+            top: 16px;
+            height: fit-content;
+            max-height: calc(100vh - 32px);
+            overflow: visible;
+        }
+
+        .main-content { min-width: 0; }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding: 14px 18px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .logo { display: flex; align-items: center; gap: 10px; }
+
+        .logo-icon {
+            width: 38px;
+            height: 38px;
+            background: var(--accent-gradient);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .logo-text {
+            font-size: 1.2em;
+            font-weight: 800;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .theme-toggle {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 7px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .stats-bar {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .rank-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--accent-primary);
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+
+        .rank-icon { font-size: 1.4em; }
+        .rank-info { display: flex; flex-direction: column; }
+        .rank-name { font-weight: 700; color: var(--accent-secondary); font-size: 0.85em; }
+        .rank-rp { font-size: 0.65em; color: var(--text-muted); }
+
+        .rank-difficulty {
+            display: inline-block;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            padding: 2px 8px;
+            border-radius: 5px;
+            font-size: 0.7em;
+            margin-left: 6px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .stat { text-align: center; padding: 6px; }
+        .stat-icon { font-size: 1.1em; }
+        .stat-value { font-size: 1.4em; font-weight: 800; }
+        .stat-label { font-size: 0.65em; color: var(--text-muted); text-transform: uppercase; }
+
+        .progress-section { margin-bottom: 10px; }
+        .progress-section:last-child { margin-bottom: 0; }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .progress-label { font-size: 0.75em; color: var(--text-secondary); font-weight: 600; }
+        .progress-value { font-size: 0.75em; color: var(--text-secondary); font-weight: 700; }
+
+        .progress-bar {
+            background: var(--bg-tertiary);
+            border-radius: 999px;
+            height: 7px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            background: var(--accent-gradient);
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.6s;
+        }
+
+        .progress-fill.legend {
+            background: var(--legend-gradient);
+        }
+
+        .sidebar-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        .sidebar-title {
+            font-size: 0.8em;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 10px;
+        }
+
+        /* Compact Quick Log */
+        .quick-log-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .quick-log-row:last-child { border-bottom: none; }
+
+        .quick-log-name {
+            font-size: 0.8em;
+            font-weight: 600;
+            min-width: 70px;
+        }
+
+        .quick-log-buttons {
+            display: flex;
+            gap: 3px;
+            flex: 1;
+        }
+
+        .preset-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.7em;
+            font-weight: 600;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .preset-btn:hover {
+            background: var(--accent-primary);
+            color: #0a0e1a;
+            border-color: var(--accent-primary);
+        }
+
+        .info-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            font-size: 0.7em;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .info-btn:hover {
+            background: var(--accent-primary);
+            color: #0a0e1a;
+            border-color: var(--accent-primary);
+        }
+
+        /* Compact Apex Penalties */
+        .situation-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+
+        .situation-card {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(124, 58, 237, 0.1));
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 4px;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .situation-card:hover { border-color: var(--danger); }
+
+        .situation-emoji { font-size: 1.2em; }
+        .situation-text { font-size: 0.65em; font-weight: 600; line-height: 1.1; }
+        .situation-penalty { font-size: 0.6em; color: var(--text-secondary); }
+
+        .weekly-goal-card {
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(236, 72, 153, 0.05));
+            border: 2px solid var(--legend-gradient);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 8px;
+        }
+
+        .weekly-goal-card.completed {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.05));
+            border-color: var(--success);
+        }
+
+        .weekly-text { font-size: 0.85em; font-weight: 700; margin-bottom: 6px; }
+        .weekly-reward { display: inline-block; background: var(--legend-gradient); color: white; padding: 2px 6px; border-radius: 3px; font-weight: 700; font-size: 0.65em; margin-bottom: 6px; }
+
+        .challenge-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 6px;
+        }
+
+        .challenge-card.completed {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: var(--success);
+        }
+
+        .challenge-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .challenge-text { font-weight: 600; font-size: 0.75em; }
+        .challenge-reward { background: var(--accent-gradient); color: #0a0e1a; padding: 2px 6px; border-radius: 3px; font-weight: 700; font-size: 0.65em; }
+
+        .challenge-progress-bar {
+            background: var(--bg-secondary);
+            border-radius: 999px;
+            height: 5px;
+            overflow: hidden;
+        }
+
+        .challenge-progress-fill {
+            background: var(--accent-gradient);
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.4s;
+        }
+
+        .challenge-progress-text {
+            font-size: 0.65em;
+            color: var(--text-muted);
+            margin-top: 3px;
+            text-align: right;
+        }
+
+        .tab-nav {
+            display: flex;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 4px;
+            margin-bottom: 16px;
+            gap: 2px;
+            overflow-x: auto;
+        }
+
+        .tab-button {
+            padding: 7px 12px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 0.8em;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+
+        .tab-button:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+        .tab-button.active { background: var(--accent-gradient); color: #0a0e1a; }
+
+        .tab-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            min-height: 400px;
+        }
+
+        .tab-panel { display: none; animation: fadeIn 0.3s; }
+        .tab-panel.active { display: block; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .section-title { font-size: 1.2em; font-weight: 700; margin-bottom: 14px; }
+
+        .legends-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .legend-card {
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            cursor: pointer;
+            text-align: center;
+            position: relative;
+        }
+
+        .legend-card.selected {
+            border-color: var(--legend-gradient);
+            box-shadow: 0 0 16px rgba(124, 58, 237, 0.3);
+        }
+
+        .legend-card.locked { opacity: 0.5; cursor: not-allowed; }
+
+        .legend-card.selected::before {
+            content: '✓ THIS WEEK';
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: var(--legend-gradient);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.65em;
+            font-weight: 700;
+        }
+
+        .legend-avatar {
+            width: 50px;
+            height: 50px;
+            margin: 0 auto 6px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8em;
+            background: var(--bg-secondary);
+            border: 3px solid;
+        }
+
+        .legend-name { font-size: 1em; font-weight: 700; }
+        .legend-title { font-size: 0.75em; color: var(--text-muted); font-style: italic; margin-bottom: 6px; }
+        .legend-perk { background: var(--bg-secondary); padding: 6px; border-radius: 5px; font-size: 0.75em; color: var(--text-secondary); }
+
+        .legend-lock-info {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 12px;
+            font-size: 0.8em;
+            color: var(--text-secondary);
+        }
+
+        .exercise-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 10px;
+        }
+
+        .exercise-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .exercise-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 6px;
+        }
+
+        .exercise-name { font-size: 1em; font-weight: 700; }
+        .exercise-badge {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.65em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .exercise-description {
+            color: var(--text-secondary);
+            font-size: 0.8em;
+            line-height: 1.4;
+        }
+
+        .tutorial-toggle {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--accent-secondary);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.75em;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+
+        .tutorial-content { display: none; margin-top: 10px; }
+        .tutorial-content.show { display: block; }
+
+        .video-container {
+            position: relative;
+            padding-bottom: 56.25%;
+            height: 0;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #000;
+            margin-bottom: 8px;
+        }
+
+        .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+        .tutorial-steps {
+            background: var(--bg-secondary);
+            border-radius: 5px;
+            padding: 10px;
+        }
+
+        .tutorial-steps h4 {
+            font-size: 0.75em;
+            color: var(--accent-secondary);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+
+        .tutorial-steps ol {
+            padding-left: 18px;
+            color: var(--text-secondary);
+            font-size: 0.8em;
+            line-height: 1.4;
+        }
+
+        .programs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 12px;
+        }
+
+        .program-card {
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .program-card.active { border-color: var(--success); box-shadow: 0 0 16px rgba(16, 185, 129, 0.2); }
+        .program-card.completed { border-color: var(--accent-primary); }
+
+        .program-name { font-size: 1.1em; font-weight: 700; margin-bottom: 4px; }
+        .program-desc { font-size: 0.8em; color: var(--text-secondary); margin-bottom: 10px; }
+        .program-progress { font-size: 0.75em; color: var(--text-muted); margin-bottom: 8px; }
+
+        .program-btn {
+            background: var(--accent-gradient);
+            color: #0a0e1a;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 5px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+
+        .program-btn:hover { transform: translateY(-1px); }
+
+        .perks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .perk-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .perk-card.common { border-color: var(--rarity-common); }
+        .perk-card.rare { border-color: var(--rarity-rare); }
+        .perk-card.epic { border-color: var(--rarity-epic); }
+        .perk-card.legendary { border-color: var(--rarity-legendary); }
+
+        .perk-card.used { opacity: 0.4; cursor: not-allowed; }
+        .perk-card.active-perk { box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); }
+
+        .perk-icon { font-size: 2em; }
+        .perk-name { font-weight: 700; font-size: 0.85em; margin-top: 4px; }
+        .perk-status { font-size: 0.7em; color: var(--text-muted); margin-top: 4px; }
+
+        .achievement-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 10px;
+        }
+
+        .achievement {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 10px;
+            text-align: center;
+            opacity: 0.5;
+        }
+
+        .achievement.unlocked {
+            opacity: 1;
+            background: linear-gradient(135deg, rgba(212, 175, 55, 0.15), rgba(244, 208, 63, 0.1));
+            border-color: var(--accent-primary);
+        }
+
+        .achievement-icon { font-size: 1.8em; margin-bottom: 4px; filter: grayscale(1); }
+        .achievement.unlocked .achievement-icon { filter: none; }
+        .achievement-name { font-weight: 700; font-size: 0.8em; }
+        .achievement-desc { font-size: 0.65em; color: var(--text-muted); margin-top: 2px; }
+
+        .workout-history { max-height: 500px; overflow-y: auto; }
+
+        .history-item {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .history-info { flex: 1; min-width: 0; }
+        .history-exercise { font-weight: 700; text-transform: capitalize; font-size: 0.85em; }
+        .history-meta { font-size: 0.7em; color: var(--text-muted); margin-top: 2px; }
+        .history-source {
+            display: inline-block;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.65em;
+            margin-left: 4px;
+        }
+
+        .history-rewards { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+        .history-xp { background: var(--accent-gradient); color: #0a0e1a; padding: 2px 8px; border-radius: 3px; font-weight: 700; font-size: 0.7em; }
+        .history-rp { background: var(--legend-gradient); color: white; padding: 2px 8px; border-radius: 3px; font-weight: 700; font-size: 0.7em; }
+
+        .delete-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 3px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.7em;
+        }
+
+        .delete-btn:hover {
+            background: var(--danger);
+            color: white;
+            border-color: var(--danger);
+        }
+
+        .notification {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            color: var(--text-primary);
+            padding: 12px 16px;
+            border-radius: 10px;
+            box-shadow: var(--shadow-lg);
+            transform: translateX(400px);
+            transition: transform 0.4s;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            max-width: 320px;
+            font-size: 0.85em;
+        }
+
+        .notification.show { transform: translateX(0); }
+        .notification.success { border-color: var(--success); }
+        .notification.achievement { border-color: var(--accent-primary); }
+        .notification.rank-up { border-color: var(--rarity-legendary); background: linear-gradient(135deg, var(--bg-secondary), rgba(245, 158, 11, 0.1)); }
+        .notification.pack { border-color: var(--legend-gradient); background: linear-gradient(135deg, var(--bg-secondary), rgba(124, 58, 237, 0.1)); }
+        .notification.error { border-color: var(--danger); }
+
+        .empty-state { text-align: center; padding: 30px 16px; color: var(--text-muted); }
+        .empty-state-icon { font-size: 2em; margin-bottom: 10px; opacity: 0.5; }
+
+        @media (max-width: 1200px) {
+            .app-layout { grid-template-columns: 280px 1fr; }
+            .sidebar-right { display: none; }
+        }
+
+        @media (max-width: 768px) {
+            .app-layout { grid-template-columns: 1fr; padding: 10px; }
+            .sidebar { position: static; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar sidebar-left">
+            <div class="sidebar-section">
+                <div class="sidebar-title">⚡ Quick Log</div>
+                <div id="quickLogContainer"></div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">🎮 Apex</div>
+                <div class="situation-grid" id="situationGrid"></div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div class="top-bar">
+                <div class="logo">
+                    <div class="logo-icon">⚡</div>
+                    <div class="logo-text">POSTURE POWER</div>
+                </div>
+                <button class="theme-toggle" onclick="toggleTheme()">
+                    <span id="themeIcon">☀️</span>
+                    <span id="themeText">Light</span>
+                </button>
+            </div>
+
+            <div class="stats-bar">
+                <div class="rank-badge">
+                    <span class="rank-icon" id="rankIcon">🥉</span>
+                    <div class="rank-info">
+                        <span class="rank-name" id="rankName">Bronze IV</span>
+                        <span class="rank-rp" id="rankRP">0 RP</span>
+                    </div>
+                    <span class="rank-difficulty" id="rankDifficulty">1.000x</span>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat">
+                        <div class="stat-icon">⚡</div>
+                        <div class="stat-value" id="level">1</div>
+                        <div class="stat-label">Level</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-icon">✨</div>
+                        <div class="stat-value" id="totalXP">0</div>
+                        <div class="stat-label">XP</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-icon">🔥</div>
+                        <div class="stat-value" id="currentStreak">0</div>
+                        <div class="stat-label">Streak</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-icon">🎁</div>
+                        <div class="stat-value" id="packsOpened">0</div>
+                        <div class="stat-label">Packs</div>
+                    </div>
+                </div>
+
+                <div class="progress-section">
+                    <div class="progress-header">
+                        <span class="progress-label">Level Progress</span>
+                        <span class="progress-value" id="progressText">0/500 XP</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill legend" id="progressFill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="progress-section">
+                    <div class="progress-header">
+                        <span class="progress-label">Ranked Progress (40% of XP)</span>
+                        <span class="progress-value" id="rankProgressText">0/500 RP</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="rankProgressFill" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-nav">
+                <button class="tab-button active" onclick="switchTab('legends')">🦸 Legends</button>
+                <button class="tab-button" onclick="switchTab('exercises')">💪 Exercises</button>
+                <button class="tab-button" onclick="switchTab('howto')">📚 How To</button>
+                <button class="tab-button" onclick="switchTab('programs')">📋 Programs</button>
+                <button class="tab-button" onclick="switchTab('perks')">⚡ Perks</button>
+                <button class="tab-button" onclick="switchTab('achievements')">🏆</button>
+                <button class="tab-button" onclick="switchTab('history')">📊</button>
+            </div>
+
+            <div class="tab-content">
+                <div class="tab-panel active" id="legends">
+                    <h2 class="section-title">🦸 Weekly Legend</h2>
+                    <div class="legend-lock-info" id="legendLockInfo">Pick your legend for this week.</div>
+                    <div class="legends-grid" id="legendsList"></div>
+                </div>
+
+                <div class="tab-panel" id="exercises">
+                    <h2 class="section-title">Exercises</h2>
+                    <div class="exercise-grid" id="exerciseList"></div>
+                </div>
+
+                <div class="tab-panel" id="howto">
+                    <h2 class="section-title">📚 How To</h2>
+                    <div id="howtoList"></div>
+                </div>
+
+                <div class="tab-panel" id="programs">
+                    <h2 class="section-title">📋 Training Programs</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.85em;">Unlock programs from Apex Packs. Activate one to follow its daily routine.</p>
+                    <div class="programs-grid" id="programsList"></div>
+                </div>
+
+                <div class="tab-panel" id="perks">
+                    <h2 class="section-title">⚡ Perks</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.85em;">Click to activate. Each perk is one-time use.</p>
+                    <div class="perks-grid" id="perksList"></div>
+                </div>
+
+                <div class="tab-panel" id="achievements">
+                    <h2 class="section-title">🏆 Trophies</h2>
+                    <div class="achievement-grid" id="achievementGrid"></div>
+                </div>
+
+                <div class="tab-panel" id="history">
+                    <h2 class="section-title">📊 History</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.8em;">Click 🗑️ to delete.</p>
+                    <div class="workout-history" id="historyList"></div>
+                </div>
+            </div>
+        </main>
+
+        <aside class="sidebar sidebar-right">
+            <div class="sidebar-section">
+                <div class="sidebar-title">🎯 Weekly Goal</div>
+                <div id="weeklyGoalContainer"></div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">⚔️ Dailies</div>
+                <div id="challengeList"></div>
+            </div>
+        </aside>
+    </div>
+
+    <div class="notification" id="notification"></div>
+
+    <script>
+        const API_URL = window.location.origin;
+        let userStats = {};
+        let allExercises = {};
+        let allPresets = {};
+        let allSituations = [];
+        let selectedLegend = 'wraith';
+        let legendCanChange = true;
+
+        function initTheme() {
+            const saved = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', saved);
+            updateThemeButton(saved);
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            document.documentElement.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+            localStorage.setItem('theme', current === 'dark' ? 'light' : 'dark');
+            updateThemeButton(current === 'dark' ? 'light' : 'dark');
+        }
+
+        function updateThemeButton(theme) {
+            document.getElementById('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
+            document.getElementById('themeText').textContent = theme === 'dark' ? 'Light' : 'Dark';
+        }
+
+        function getRankIcon(rankName) {
+            if (rankName.includes('Bronze')) return '🥉';
+            if (rankName.includes('Silver')) return '🥈';
+            if (rankName.includes('Gold')) return '🥇';
+            if (rankName.includes('Platinum')) return '💎';
+            if (rankName.includes('Diamond')) return '💠';
+            if (rankName === 'Master') return '👑';
+            if (rankName === 'Apex Predator') return '🐆';
+            return '🥉';
+        }
+
+        async function apiGet(endpoint) { return (await fetch(`${API_URL}${endpoint}`)).json(); }
+        async function apiPost(endpoint, data) { return (await fetch(`${API_URL}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })).json(); }
+        async function apiDelete(endpoint) { return (await fetch(`${API_URL}${endpoint}`, { method: 'DELETE' })).json(); }
+
+        async function loadStats() {
+            userStats = await apiGet('/api/stats');
+            selectedLegend = userStats.selected_legend;
+            updateStatsUI();
+        }
+
+        function updateStatsUI() {
+            document.getElementById('level').textContent = userStats.level;
+            document.getElementById('totalXP').textContent = userStats.total_xp;
+            document.getElementById('currentStreak').textContent = userStats.current_streak;
+            document.getElementById('packsOpened').textContent = userStats.packs_opened;
+            document.getElementById('progressText').textContent = `${userStats.xpInCurrentLevel}/500 XP`;
+            document.getElementById('progressFill').style.width = `${userStats.progressPercent}%`;
+            document.getElementById('rankName').textContent = userStats.current_rank;
+            document.getElementById('rankIcon').textContent = getRankIcon(userStats.current_rank);
+            document.getElementById('rankRP').textContent = `${userStats.season_xp} RP`;
+            document.getElementById('rankProgressText').textContent = `${userStats.rankProgress.current}/${userStats.rankProgress.needed} RP`;
+            document.getElementById('rankProgressFill').style.width = `${userStats.rankProgress.percent}%`;
+            document.getElementById('rankDifficulty').textContent = `${userStats.rankProgress.percent ? '' : ''}${getRankDifficultyLabel(userStats.current_rank)} difficulty`;
+        }
+
+        function getRankDifficultyLabel(rankName) {
+            const RANK_INDEX = {
+                'Bronze IV': 0, 'Bronze III': 1, 'Bronze II': 2, 'Bronze I': 3,
+                'Silver IV': 4, 'Silver III': 5, 'Silver II': 6, 'Silver I': 7,
+                'Gold IV': 8, 'Gold III': 9, 'Gold II': 10, 'Gold I': 11,
+                'Platinum IV': 12, 'Platinum III': 13, 'Platinum II': 14, 'Platinum I': 15,
+                'Diamond IV': 16, 'Diamond III': 17, 'Diamond II': 18, 'Diamond I': 19,
+                'Master': 20, 'Apex Predator': 21
+            };
+            const idx = RANK_INDEX[rankName] || 0;
+            const subTier = (idx % 4) * 0.025;
+            const major = Math.floor(idx / 4) * 0.1;
+            return (1.0 + subTier + major).toFixed(3);
+        }
+
+        async function loadQuickLog() {
+            allPresets = await apiGet('/api/quick-presets');
+            allExercises = await apiGet('/api/exercises');
+            renderQuickLog();
+            renderExercises();
+            renderHowTo();
+        }
+
+        function renderQuickLog() {
+            const container = document.getElementById('quickLogContainer');
+            container.innerHTML = Object.entries(allExercises).map(([key, ex]) => {
+                const presets = allPresets[key] || [];
+                return `
+                    <div class="quick-log-row">
+                        <div class="quick-log-name">${ex.name}</div>
+                        <div class="quick-log-buttons">
+                            ${presets.map(p => `<button class="preset-btn" onclick="quickLog('${key}', ${p.value})">${p.label}</button>`).join('')}
+                        </div>
+                        <button class="info-btn" onclick="jumpToHowTo('${key}')" title="Watch tutorial">i</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function jumpToHowTo(exerciseType) {
+            switchTab('howto');
+            setTimeout(() => {
+                const el = document.getElementById(`howto-${exerciseType}`);
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    toggleTutorial(exerciseType);
+                }
+            }, 100);
+        }
+
+        async function quickLog(exerciseType, reps) {
+            const ex = allExercises[exerciseType];
+            const data = await apiPost('/api/workouts', { exerciseType, reps, source: 'quick_log' });
+            handleWorkoutResponse(data, `${reps} ${ex.unit}`);
+        }
+
+        async function loadSituations() {
+            allSituations = await apiGet('/api/apex-situations');
+            const grid = document.getElementById('situationGrid');
+            // Show only top 4 to keep compact
+            const top4 = allSituations.slice(0, 4);
+            grid.innerHTML = top4.map(sit => {
+                const ex = allExercises[sit.exercise];
+                return `
+                    <div class="situation-card" onclick="logSituation('${sit.id}')">
+                        <div class="situation-emoji">${sit.emoji}</div>
+                        <div class="situation-text">${sit.text}</div>
+                        <div class="situation-penalty">${sit.amount} ${ex ? ex.unit : 'reps'}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function logSituation(situationId) {
+            const situation = allSituations.find(s => s.id === situationId);
+            if (!situation) return;
+            const data = await apiPost('/api/workouts', {
+                exerciseType: situation.exercise,
+                reps: situation.amount,
+                notes: `Apex: ${situation.text}`,
+                source: 'apex_situation'
+            });
+            handleWorkoutResponse(data, situation.text);
+        }
+
+        function handleWorkoutResponse(data, label) {
+            if (data.success) {
+                const bonusText = data.bonusApplied ? ` (${data.multiplier.toFixed(2)}x!)` : '';
+                showNotification(`+${data.xpEarned} XP${bonusText} • +${data.rpEarned} RP - ${label}`, 'success');
+                loadStats();
+                loadDailyChallenges();
+                loadWeeklyGoal();
+                
+                if (data.rankChanged) setTimeout(() => showNotification(`🎖️ RANK UP! ${data.newRank} (harder challenges!)`, 'rank-up'), 1500);
+                if (data.packDropped && data.packDropped.items) {
+                    setTimeout(() => {
+                        const itemNames = data.packDropped.items.map(i => i.name).join(', ');
+                        showNotification(`🎁 ${data.packDropped.rarity.toUpperCase()}: ${itemNames}`, 'pack');
+                    }, 3000);
+                }
+                if (data.achievementsUnlocked.length > 0) setTimeout(() => showNotification(`🏆 ${data.achievementsUnlocked[0].name}`, 'achievement'), 4500);
+                if (data.completedChallenges && data.completedChallenges.length > 0) data.completedChallenges.forEach((ch, i) => setTimeout(() => showNotification(`⚔️ +${ch.xpReward} XP`, 'achievement'), 6000 + (i * 1500)));
+                if (data.weeklyGoalCompleted && data.weeklyGoalCompleted.completed) setTimeout(() => showNotification(`🎯 WEEKLY GOAL! +${data.weeklyGoalCompleted.rp_bonus} RP`, 'rank-up'), 7500);
+            }
+        }
+
+        async function loadLegends() {
+            const allLegends = await apiGet('/api/legends');
+            const status = await apiGet('/api/legend-status');
+            legendCanChange = status.canChange;
+            const lockInfo = document.getElementById('legendLockInfo');
+            if (!legendCanChange) {
+                lockInfo.innerHTML = `🔒 <strong>${status.selectedLegend.charAt(0).toUpperCase() + status.selectedLegend.slice(1)}</strong> locked for this week.`;
+            } else {
+                lockInfo.innerHTML = `Pick your legend for this week. Locked until Monday.`;
+            }
+            const list = document.getElementById('legendsList');
+            list.innerHTML = Object.entries(allLegends).map(([key, legend]) => `
+                <div class="legend-card ${key === selectedLegend ? 'selected' : ''} ${!legendCanChange && key !== selectedLegend ? 'locked' : ''}" onclick="${legendCanChange || key === selectedLegend ? `selectLegend('${key}')` : 'showLegendLockedError()'}">
+                    <div class="legend-avatar" style="border-color: ${legend.color}; background: ${legend.color}20;">${legend.emoji}</div>
+                    <div class="legend-name">${legend.name}</div>
+                    <div class="legend-title">${legend.title}</div>
+                    <div class="legend-perk">${legend.perk}</div>
+                </div>
+            `).join('');
+        }
+
+        function showLegendLockedError() {
+            showNotification('🔒 Legend locked until next Monday', 'error');
+        }
+
+        async function selectLegend(key) {
+            const res = await apiPost('/api/select-legend', { legend: key });
+            if (res.success) {
+                selectedLegend = key;
+                legendCanChange = false;
+                const allLegends = await apiGet('/api/legends');
+                document.getElementById('legendLockInfo').innerHTML = `🔒 <strong>${allLegends[key].name}</strong> locked for this week.`;
+                showNotification(`🦸 Now: ${allLegends[key].name}`, 'achievement');
+                loadStats();
+                loadLegends();
+            } else if (res.error === 'Legend locked for this week') showLegendLockedError();
+        }
+
+        async function loadDailyChallenges() {
+            const challenges = await apiGet('/api/daily-challenges');
+            const list = document.getElementById('challengeList');
+            if (!challenges.length) { list.innerHTML = '<div class="empty-state" style="padding: 16px;"><p>No challenges.</p></div>'; return; }
+            list.innerHTML = challenges.map(ch => {
+                const percent = Math.min(100, Math.round((ch.progress / ch.target_value) * 100));
+                return `
+                    <div class="challenge-card ${ch.completed ? 'completed' : ''}">
+                        <div class="challenge-header">
+                            <div class="challenge-text">${ch.completed ? '✓ ' : ''}${ch.challenge_text}</div>
+                            <div class="challenge-reward">+${ch.xp_reward}</div>
+                        </div>
+                        <div class="challenge-progress-bar"><div class="challenge-progress-fill" style="width: ${percent}%"></div></div>
+                        <div class="challenge-progress-text">${ch.progress}/${ch.target_value}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadWeeklyGoal() {
+            const goal = await apiGet('/api/weekly-goal');
+            const container = document.getElementById('weeklyGoalContainer');
+            if (!goal) { container.innerHTML = ''; return; }
+            const percent = Math.min(100, Math.round((goal.progress / goal.target_value) * 100));
+            const text = goal.text.replace('{target}', goal.target_value);
+            container.innerHTML = `
+                <div class="weekly-goal-card ${goal.completed ? 'completed' : ''}">
+                    <div class="weekly-text">${goal.completed ? '✓ ' : ''}${text}</div>
+                    <div class="weekly-reward">+${goal.rp_bonus} RP</div>
+                    <div class="progress-bar"><div class="progress-fill legend" style="width: ${percent}%"></div></div>
+                    <div style="text-align: right; margin-top: 4px; font-size: 0.7em; color: var(--text-muted);">${goal.progress}/${goal.target_value}</div>
+                </div>
+            `;
+        }
+
+        async function loadPrograms() {
+            const programs = await apiGet('/api/programs');
+            const list = document.getElementById('programsList');
+            if (!programs.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><p>No programs yet. Level up to earn Apex Packs!</p></div>'; return; }
+            list.innerHTML = programs.map(p => `
+                <div class="program-card ${p.active ? 'active' : ''} ${p.completed_at ? 'completed' : ''}">
+                    <div class="program-name">${p.program_name}</div>
+                    <div class="program-desc">${p.description}</div>
+                    <div class="program-progress">Day ${p.current_day} of ${p.duration_days}${p.active ? ' (Active)' : p.completed_at ? ' (Completed)' : ''}</div>
+                    ${!p.active && !p.completed_at ? `<button class="program-btn" onclick="startProgram(${p.id})">Start Program</button>` : ''}
+                </div>
+            `).join('');
+        }
+
+        async function startProgram(id) {
+            await apiPost(`/api/program/${id}/start`, {});
+            showNotification('Program started! Follow daily routine.', 'achievement');
+            loadPrograms();
+        }
+
+        async function loadPerks() {
+            const perks = await apiGet('/api/perks');
+            const active = await apiGet('/api/active-perks');
+            const activeIds = new Set(active.map(p => p.id));
+            const list = document.getElementById('perksList');
+            if (!perks.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚡</div><p>No perks yet. Earn from Apex Packs!</p></div>'; return; }
+            
+            const perkIcons = { xp_boost: '⚡', rest_day: '😴', custom_preset: '🎯', rank_protection: '🛡️' };
+            list.innerHTML = perks.map(p => `
+                <div class="perk-card ${p.perk_type} ${p.used ? 'used' : ''} ${activeIds.has(p.id) ? 'active-perk' : ''}" onclick="${!p.used ? `activatePerk(${p.id})` : ''}">
+                    <div class="perk-icon">${perkIcons[p.perk_type] || '🎁'}</div>
+                    <div class="perk-name">${p.perk_name}</div>
+                    <div class="perk-status">${activeIds.has(p.id) ? 'ACTIVE' : p.used ? 'USED' : 'Click to activate'}</div>
+                </div>
+            `).join('');
+        }
+
+        async function activatePerk(id) {
+            const res = await apiPost(`/api/perk/${id}/activate`, {});
+            if (res.success) showNotification('⚡ Perk activated!', 'success');
+            loadPerks();
+        }
+
+        async function loadAchievements() {
+            const unlocked = await apiGet('/api/achievements');
+            const unlockedKeys = new Set(unlocked.map(a => a.achievement_key));
+            const allAchievements = [
+                { key: 'first_workout', name: 'First Steps', desc: 'First workout', icon: '🎯' },
+                { key: 'hundred_pushups', name: 'Centurion', desc: '100 pushups', icon: '💪' },
+                { key: 'week_streak', name: 'Week Warrior', desc: '7-day streak', icon: '🔥' },
+                { key: 'level_5', name: 'Dedicated', desc: 'Level 5', icon: '⭐' },
+                { key: 'level_10', name: 'Posture Master', desc: 'Level 10', icon: '👑' },
+                { key: 'reach_gold', name: 'Golden Form', desc: 'Gold rank', icon: '🥇' },
+                { key: 'reach_diamond', name: 'Diamond', desc: 'Diamond rank', icon: '💎' },
+                { key: 'apex_predator', name: 'Apex Predator', desc: 'Top rank', icon: '🐆' }
+            ];
+            const grid = document.getElementById('achievementGrid');
+            grid.innerHTML = allAchievements.map(ach => `
+                <div class="achievement ${unlockedKeys.has(ach.key) ? 'unlocked' : ''}">
+                    <div class="achievement-icon">${ach.icon}</div>
+                    <div class="achievement-name">${ach.name}</div>
+                    <div class="achievement-desc">${ach.desc}</div>
+                </div>
+            `).join('');
+        }
+
+        async function loadHistory() {
+            const workouts = await apiGet('/api/workouts');
+            const list = document.getElementById('historyList');
+            if (!workouts.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><p>No workouts yet.</p></div>'; return; }
+            list.innerHTML = workouts.map(w => {
+                const src = w.source === 'apex_situation' ? '🎮' : w.source === 'quick_log' ? '⚡' : '✏️';
+                const rpEarned = Math.round(w.xp_earned * 0.4);
+                return `
+                    <div class="history-item">
+                        <div class="history-info">
+                            <div class="history-exercise">${w.exercise_type.replace(/_/g, ' ')} - ${w.reps} ${w.unit} <span class="history-source">${src}</span></div>
+                            <div class="history-meta">${new Date(w.created_at).toLocaleString()}</div>
+                        </div>
+                        <div class="history-rewards">
+                            <div class="history-xp">+${w.xp_earned} XP</div>
+                            <div class="history-rp">+${rpEarned} RP</div>
+                        </div>
+                        <button class="delete-btn" onclick="deleteWorkout(${w.id})">🗑️</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function deleteWorkout(id) {
+            await apiDelete(`/api/workouts/${id}`);
+            loadStats();
+            loadHistory();
+            loadDailyChallenges();
+            loadWeeklyGoal();
+        }
+
+        function renderExercises() {
+            document.getElementById('exerciseList').innerHTML = Object.values(allExercises).map(ex => `
+                <div class="exercise-card">
+                    <div class="exercise-header">
+                        <div class="exercise-name">${ex.name} (${ex.unit})</div>
+                        <div class="exercise-badge">${ex.difficulty}</div>
+                    </div>
+                    <div class="exercise-description">${ex.description}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderHowTo() {
+            document.getElementById('howtoList').innerHTML = Object.values(allExercises).map(ex => `
+                <div class="exercise-card" id="howto-${ex.type}" style="margin-bottom: 14px;">
+                    <div class="exercise-header">
+                        <div class="exercise-name">${ex.name} (${ex.unit})</div>
+                        <div class="exercise-badge">${ex.difficulty}</div>
+                    </div>
+                    <div class="exercise-description" style="margin-bottom: 10px;">${ex.description}</div>
+                    <button class="tutorial-toggle" onclick="toggleTutorial('${ex.type}')">
+                        <span id="tutIcon-${ex.type}">▶</span> Watch & Steps
+                    </button>
+                    <div class="tutorial-content" id="tutorial-${ex.type}">
+                        <div class="video-container">
+                            <iframe src="https://www.youtube.com/embed/${ex.youtubeId}" frameborder="0" allowfullscreen></iframe>
+                        </div>
+                        <div class="tutorial-steps">
+                            <h4>Form Steps</h4>
+                            <ol>${ex.steps.map(s => `<li>${s}</li>`).join('')}</ol>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function toggleTutorial(type) {
+            const content = document.getElementById(`tutorial-${type}`);
+            const icon = document.getElementById(`tutIcon-${type}`);
+            if (content.classList.contains('show')) { content.classList.remove('show'); icon.textContent = '▶'; }
+            else { content.classList.add('show'); icon.textContent = '▼'; }
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+            if (tabName === 'legends') loadLegends();
+            if (tabName === 'programs') loadPrograms();
+            if (tabName === 'perks') loadPerks();
+            if (tabName === 'achievements') loadAchievements();
+            if (tabName === 'history') loadHistory();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notif = document.getElementById('notification');
+            notif.textContent = message;
+            notif.className = `notification ${type} show`;
+            setTimeout(() => notif.classList.remove('show'), 4000);
+        }
+
+        initTheme();
+        loadStats();
+        loadQuickLog();
+        loadSituations();
+        loadDailyChallenges();
+        loadWeeklyGoal();
+        loadLegends();
+    </script>
+</body>
+</html>

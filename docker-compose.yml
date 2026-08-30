@@ -1,6 +1,6 @@
 services:
   fitmaxxing:
-    build: .
+    image: ghcr.io/nxxt00/fitmaxxing:latest
     container_name: fitmaxxing
     ports:
       - "3000:3000"

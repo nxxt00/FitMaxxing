@@ -3,7 +3,7 @@ services:
     image: ghcr.io/nxxt00/fitmaxxing:latest
     container_name: fitmaxxing
     ports:
-      - "3000:3000"
+      - 3000:3000
     volumes:
       - fitmaxxing-data:/app/data
     networks:

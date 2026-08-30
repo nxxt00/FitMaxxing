@@ -141,7 +141,7 @@ if (!workoutColumnNames.has('unit')) {
   console.log('Migrating workouts: adding unit column');
   db.exec("ALTER TABLE workouts ADD COLUMN unit TEXT DEFAULT 'reps'");
   db.exec("UPDATE workouts SET unit = 'seconds' WHERE exercise_type IN ('planks', 'wall_sits')");
-  db.exec("UPDATE workouts SET unit = 'reps' WHERE exercise_type IN ('pushups', 'squats', 'stretches', 'chest_stretch', 'neck_stretch', 'shoulder_rolls', 'cat_cow')");
+  db.exec("UPDATE workouts SET unit = 'reps' WHERE exercise_type IN ('pushups', 'squats', 'stretches', 'chest_stretch', 'neck_stretch', 'cat_cow')");
 }
 
 if (!workoutColumnNames.has('source')) {
@@ -209,13 +209,14 @@ function getRankProgress(seasonXP) {
 }
 
 // Exercise definitions
+// Stretches curated for desk-sitters: doorway chest (rounded shoulders),
+// lateral neck flex (tech neck), cat-cow (thoracic mobility).
 const EXERCISES = {
   pushups: { name: 'Pushups', unit: 'reps', youtubeId: 'IODxDxX7oi4' },
   planks: { name: 'Plank', unit: 'seconds', youtubeId: 'ASdvN_XEl_c' },
-  chest_stretch: { name: 'Chest Stretch', unit: 'seconds', youtubeId: '2L2lnxIcNmo' },
-  neck_stretch: { name: 'Neck Stretch', unit: 'seconds', youtubeId: '2L2lnxIcNmo' },
-  shoulder_rolls: { name: 'Shoulder Rolls', unit: 'reps', youtubeId: '2L2lnxIcNmo' },
-  cat_cow: { name: 'Cat-Cow', unit: 'reps', youtubeId: '2L2lnxIcNmo' },
+  chest_stretch: { name: 'Chest Stretch', unit: 'seconds', youtubeId: 'O8rJw_TmC1Y' },
+  neck_stretch: { name: 'Neck Stretch', unit: 'seconds', youtubeId: 'FRNtLrMf-1A' },
+  cat_cow: { name: 'Cat-Cow', unit: 'reps', youtubeId: 'LIVJZZyZ2qM' },
   squats: { name: 'Squats', unit: 'reps', youtubeId: 'aclHkVaku9U' },
   wall_sits: { name: 'Wall Sit', unit: 'seconds', youtubeId: 'w7qVVT_h_lI' }
 };
@@ -225,7 +226,7 @@ const LEGENDS = {
     name: 'Wraith',
     title: 'The Void Pilot',
     perk: '+10% XP for core & stretches',
-    bonusTypes: ['planks', 'chest_stretch', 'neck_stretch', 'shoulder_rolls', 'cat_cow'],
+    bonusTypes: ['planks', 'chest_stretch', 'neck_stretch', 'cat_cow'],
     bonusMultiplier: 1.1,
     color: '#a78bfa',
     emoji: '👻'
@@ -243,7 +244,7 @@ const LEGENDS = {
     name: 'Lifeline',
     title: 'The Combat Medic',
     perk: '+15% XP for everything',
-    bonusTypes: ['pushups', 'planks', 'chest_stretch', 'neck_stretch', 'shoulder_rolls', 'cat_cow', 'squats', 'wall_sits'],
+    bonusTypes: ['pushups', 'planks', 'chest_stretch', 'neck_stretch', 'cat_cow', 'squats', 'wall_sits'],
     bonusMultiplier: 1.15,
     color: '#10b981',
     emoji: '💚'
@@ -344,7 +345,7 @@ function updateDailyChallengeProgress(exerciseType, reps) {
       increment = reps;
     } else if (template.type === 'any') {
       increment = 1;
-    } else if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'shoulder_rolls' || exerciseType === 'cat_cow')) {
+    } else if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'cat_cow')) {
       // Stretches count any posture work
       increment = reps;
     }
@@ -452,7 +453,7 @@ const PROGRAM_TEMPLATES = {
       { day: 8, exercise: 'pushups', target: 30 },
       { day: 9, exercise: 'squats', target: 40 },
       { day: 10, exercise: 'planks', target: 45 },
-      { day: 11, exercise: 'shoulder_rolls', target: 20 },
+      { day: 11, exercise: 'cat_cow', target: 15 },
       { day: 12, exercise: 'pushups', target: 35 },
       { day: 13, exercise: 'wall_sits', target: 45 },
       { day: 14, exercise: 'rest', target: 0 },
@@ -479,14 +480,14 @@ const PROGRAM_TEMPLATES = {
     days: [
       { day: 1, exercise: 'chest_stretch', target: 60 },
       { day: 2, exercise: 'neck_stretch', target: 45 },
-      { day: 3, exercise: 'shoulder_rolls', target: 30 },
+      { day: 3, exercise: 'cat_cow', target: 20 },
       { day: 4, exercise: 'cat_cow', target: 20 },
       { day: 5, exercise: 'chest_stretch', target: 90 },
       { day: 6, exercise: 'planks', target: 60 },
       { day: 7, exercise: 'rest', target: 0 },
       { day: 8, exercise: 'chest_stretch', target: 90 },
       { day: 9, exercise: 'neck_stretch', target: 60 },
-      { day: 10, exercise: 'shoulder_rolls', target: 40 },
+      { day: 10, exercise: 'cat_cow', target: 30 },
       { day: 11, exercise: 'planks', target: 75 },
       { day: 12, exercise: 'cat_cow', target: 25 },
       { day: 13, exercise: 'wall_sits', target: 60 },
@@ -494,7 +495,7 @@ const PROGRAM_TEMPLATES = {
       { day: 15, exercise: 'chest_stretch', target: 120 },
       { day: 16, exercise: 'planks', target: 90 },
       { day: 17, exercise: 'neck_stretch', target: 90 },
-      { day: 18, exercise: 'shoulder_rolls', target: 50 },
+      { day: 18, exercise: 'cat_cow', target: 35 },
       { day: 19, exercise: 'cat_cow', target: 30 },
       { day: 20, exercise: 'planks', target: 120 },
       { day: 21, exercise: 'rest', target: 0 }
@@ -728,11 +729,6 @@ const QUICK_PRESETS = {
     { label: '+10s', value: 10 },
     { label: '+20s', value: 20 },
     { label: '+30s', value: 30 }
-  ],
-  shoulder_rolls: [
-    { label: '+5', value: 5 },
-    { label: '+10', value: 10 },
-    { label: '+15', value: 15 }
   ],
   cat_cow: [
     { label: '+5', value: 5 },
@@ -999,7 +995,7 @@ app.get('/api/exercises', (req, res) => {
       description: 'Doorway stretch to open up tight chest muscles from sitting at a desk. Counteracts rounded shoulders.',
       category: 'mobility',
       difficulty: 'beginner',
-      youtubeId: '2L2lnxIcNmo',
+      youtubeId: 'O8rJw_TmC1Y',
       steps: [
         'Stand in a doorway with arms at 90° on each side of the frame',
         'Step one foot forward through the doorway',
@@ -1017,7 +1013,7 @@ app.get('/api/exercises', (req, res) => {
       description: 'Gentle neck stretch to relieve tension from looking at screens. Helps with forward head posture.',
       category: 'mobility',
       difficulty: 'beginner',
-      youtubeId: '2L2lnxIcNmo',
+      youtubeId: 'FRNtLrMf-1A',
       steps: [
         'Sit or stand with good posture, shoulders relaxed',
         'Tilt your head to the right, bringing your ear toward your shoulder',
@@ -1028,24 +1024,6 @@ app.get('/api/exercises', (req, res) => {
         'Keep breathing deeply throughout'
       ]
     },
-    shoulder_rolls: {
-      type: 'shoulder_rolls',
-      name: 'Shoulder Rolls',
-      unit: 'reps',
-      description: 'Simple shoulder mobility exercise to release tension and improve posture.',
-      category: 'mobility',
-      difficulty: 'beginner',
-      youtubeId: '2L2lnxIcNmo',
-      steps: [
-        'Stand with arms hanging loosely at your sides',
-        'Lift your shoulders up toward your ears',
-        'Roll them backward in a circular motion',
-        'Squeeze your shoulder blades together at the back',
-        'Lower your shoulders back down',
-        'Reverse the direction for forward rolls',
-        'Keep movements slow and controlled'
-      ]
-    },
     cat_cow: {
       type: 'cat_cow',
       name: 'Cat-Cow',
@@ -1053,7 +1031,7 @@ app.get('/api/exercises', (req, res) => {
       description: 'Spinal mobility exercise to relieve back tension and improve posture. Great between long sitting sessions.',
       category: 'mobility',
       difficulty: 'beginner',
-      youtubeId: '2L2lnxIcNmo',
+      youtubeId: 'LIVJZZyZ2qM',
       steps: [
         'Start on hands and knees in a tabletop position',
         'Wrists under shoulders, knees under hips',
@@ -1138,9 +1116,12 @@ app.get('/api/legend-status', (req, res) => {
   const stats = db.prepare('SELECT selected_legend, legend_week_start FROM user_stats WHERE id = 1').get();
   const currentWeek = getWeekStart();
   const canChange = !stats.legend_week_start || stats.legend_week_start !== currentWeek;
-  
+  const activeKey = stats.selected_legend || 'wraith';
+  const active = LEGENDS[activeKey] || LEGENDS.wraith;
+
   res.json({
-    selectedLegend: stats.selected_legend,
+    selectedLegend: activeKey,
+    legend: active,
     weekStart: stats.legend_week_start,
     currentWeek,
     canChange

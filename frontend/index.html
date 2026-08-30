@@ -761,9 +761,50 @@
             .sidebar-right { display: none; }
         }
 
-        @media (max-width: 768px) {
-            .app-layout { grid-template-columns: 1fr; padding: 10px; }
-            .sidebar { position: static; }
+        @media (max-width: 900px) {
+            /* Reorder so stats-bar comes first, then quick log, then main */
+            .app-layout { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+            .sidebar { position: static; max-height: none; }
+            .sidebar-left { order: 2; }   /* Quick log + Apex below main content */
+            .main-content { order: 1; }   /* Stats + tabs on top */
+            .sidebar-right { order: 3; display: none; } /* hide on tablet/mobile */
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .notification { top: auto; bottom: 16px; right: 12px; left: 12px; max-width: none; }
+            .tab-nav { flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+            .tab-nav::-webkit-scrollbar { height: 4px; }
+            .tab-nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+            .modal { max-height: 90vh; }
+            .legend-card-dash { padding: 12px; }
+        }
+
+        @media (max-width: 600px) {
+            .app-layout { padding: 8px; gap: 10px; }
+            .top-bar { padding: 10px 12px; }
+            .logo-text { font-size: 1em; }
+            .stats-bar { padding: 12px; }
+            .rank-badge { flex-wrap: wrap; }
+            .stats-grid { gap: 6px; }
+            .stat { padding: 8px 4px; }
+            .stat-value { font-size: 1.2em; }
+            .tab-content { padding: 14px; }
+            .exercise-grid { grid-template-columns: 1fr; }
+            .programs-grid { grid-template-columns: 1fr; }
+            .perks-grid { grid-template-columns: repeat(2, 1fr); }
+            .achievement-grid { grid-template-columns: repeat(2, 1fr); }
+            .quick-log-row { flex-wrap: wrap; gap: 8px; }
+            .quick-log-buttons { flex-wrap: wrap; }
+            .preset-btn { padding: 8px 10px; font-size: 0.85em; min-height: 38px; }
+            .info-btn { width: 32px; height: 32px; font-size: 0.85em; }
+            .situation-card { padding: 10px 6px; }
+            .situation-emoji { font-size: 1.4em; }
+            .situation-text { font-size: 0.75em; }
+            .situation-penalty { font-size: 0.7em; }
+            .theme-toggle { padding: 8px 10px; font-size: 0.85em; }
+            .legend-card-dash .legend-name-line { font-size: 0.9em; }
+            .legend-card-dash .legend-perk-line { font-size: 0.8em; }
+            /* Reduce legend-card padding in modal so 5 fit on screen */
+            .legend-card { padding: 10px 8px; }
+            .legend-avatar { width: 42px; height: 42px; font-size: 1.4em; }
         }
     </style>
 </head>

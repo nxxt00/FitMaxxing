@@ -7,17 +7,12 @@ services:
     volumes:
       - fitmaxxing-data:/app/data
     networks:
-      - default
       - nginx_default
     restart: unless-stopped
-    environment:
-      - NODE_ENV=production
-      - DB_PATH=/app/data/fitmaxxing.db
 
 volumes:
   fitmaxxing-data:
 
 networks:
-  default:
   nginx_default:
     external: true

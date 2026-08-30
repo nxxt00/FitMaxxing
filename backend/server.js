@@ -944,6 +944,20 @@ app.get('/api/workouts', (req, res) => {
   res.json(workouts);
 });
 
+app.get('/api/today-summary', (req, res) => {
+  // Per-exercise reps completed today (since midnight local server time)
+  const today = new Date().toISOString().split('T')[0];
+  const rows = db.prepare(`
+    SELECT exercise_type, SUM(reps) as reps, COUNT(*) as count
+    FROM workouts
+    WHERE date(created_at) = ?
+    GROUP BY exercise_type
+  `).all(today);
+  const result = {};
+  rows.forEach(r => { result[r.exercise_type] = { reps: r.reps, count: r.count }; });
+  res.json({ date: today, perExercise: result });
+});
+
 app.get('/api/achievements', (req, res) => {
   const achievements = db.prepare('SELECT * FROM achievements ORDER BY unlocked_at DESC').all();
   res.json(achievements);

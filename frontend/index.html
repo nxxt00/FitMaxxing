@@ -267,6 +267,7 @@
             gap: 6px;
             padding: 6px 0;
             border-bottom: 1px solid var(--border);
+            position: relative;
         }
 
         .quick-log-row:last-child { border-bottom: none; }
@@ -275,7 +276,17 @@
             font-size: 0.8em;
             font-weight: 600;
             min-width: 70px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
         }
+
+        .quick-log-today {
+            font-size: 0.65em;
+            color: var(--accent-primary);
+            font-weight: 700;
+        }
+        .quick-log-today.zero { color: var(--text-muted); font-weight: 500; }
 
         .quick-log-buttons {
             display: flex;
@@ -444,6 +455,15 @@
             from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        @keyframes pulseRow {
+            0% { background: rgba(212, 175, 55, 0); }
+            20% { background: rgba(212, 175, 55, 0.25); }
+            100% { background: rgba(212, 175, 55, 0); }
+        }
+        .quick-log-row.flash { animation: pulseRow 0.7s ease-out; }
+        .preset-btn:active { transform: scale(0.95); }
+        .preset-btn { transition: transform 0.08s ease, background 0.15s, color 0.15s, border-color 0.15s; }
 
         .section-title { font-size: 1.2em; font-weight: 700; margin-bottom: 14px; }
 
@@ -1003,6 +1023,7 @@
         let allExercises = {};
         let allPresets = {};
         let allSituations = [];
+        let todaySummary = {}; // {exerciseKey: {reps, count}}
         let selectedLegend = 'wraith';
         let legendCanChange = true;
 
@@ -1078,6 +1099,8 @@
         async function loadQuickLog() {
             allPresets = await apiGet('/api/quick-presets');
             allExercises = await apiGet('/api/exercises');
+            const summary = await apiGet('/api/today-summary');
+            todaySummary = summary.perExercise || {};
             renderQuickLog();
             renderExercises();
             renderHowTo();
@@ -1094,9 +1117,18 @@
             });
             container.innerHTML = ordered.map(([key, ex]) => {
                 const presets = allPresets[key] || [];
+                const t = todaySummary[key];
+                const todayReps = t ? t.reps : 0;
+                const todayUnit = ex.unit;
+                const todayLabel = todayReps > 0
+                    ? `today: ${todayReps} ${todayUnit}`
+                    : 'today: 0';
                 return `
-                    <div class="quick-log-row">
-                        <div class="quick-log-name">${ex.name}</div>
+                    <div class="quick-log-row" data-exercise="${key}">
+                        <div class="quick-log-name">
+                            <span>${ex.name}</span>
+                            <span class="quick-log-today ${todayReps === 0 ? 'zero' : ''}">${todayLabel}</span>
+                        </div>
                         <div class="quick-log-buttons">
                             ${presets.map(p => `<button class="preset-btn" onclick="quickLog('${key}', ${p.value})">${p.label}</button>`).join('')}
                         </div>
@@ -1147,6 +1179,21 @@
             const ex = allExercises[exerciseType];
             const data = await apiPost('/api/workouts', { exerciseType, reps, source: 'quick_log' });
             handleWorkoutResponse(data, `${reps} ${ex.unit}`);
+            // Update local today summary so the row reflects it instantly
+            const t = todaySummary[exerciseType] || { reps: 0, count: 0 };
+            todaySummary[exerciseType] = { reps: t.reps + reps, count: t.count + 1 };
+            // Flash the row
+            const row = document.querySelector(`.quick-log-row[data-exercise="${exerciseType}"]`);
+            if (row) {
+                row.classList.remove('flash');
+                void row.offsetWidth; // restart animation
+                row.classList.add('flash');
+                const tally = row.querySelector('.quick-log-today');
+                if (tally) {
+                    tally.textContent = `today: ${todaySummary[exerciseType].reps} ${ex.unit}`;
+                    tally.classList.remove('zero');
+                }
+            }
         }
 
         async function loadSituations() {

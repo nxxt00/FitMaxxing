@@ -1,4 +1,4 @@
-# Posture Power
+# FitMaxxing
 
 Gamified posture-correction workout tracker with Apex Legends-inspired mechanics. Built to fix your posture through pushups, planks, stretches, and other bodyweight exercises.
 

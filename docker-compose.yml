@@ -1,21 +1,21 @@
 services:
-  posture-app:
+  fitmaxxing:
     build: .
-    container_name: posture-app
+    container_name: fitmaxxing
     ports:
       - "3000:3000"
     volumes:
-      - posture-data:/app/data
+      - fitmaxxing-data:/app/data
     networks:
       - default
       - nginx_default
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - DB_PATH=/app/data/posture.db
+      - DB_PATH=/app/data/fitmaxxing.db
 
 volumes:
-  posture-data:
+  fitmaxxing-data:
 
 networks:
   default:

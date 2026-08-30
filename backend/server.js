@@ -5,7 +5,7 @@ const path = require('path');
 
 const app = express();
 const PORT = 3000;
-const DB_PATH = process.env.DB_PATH || '/app/data/posture.db';
+const DB_PATH = process.env.DB_PATH || '/app/data/fitmaxxing.db';
 
 app.use(cors());
 app.use(express.json());

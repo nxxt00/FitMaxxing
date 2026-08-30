@@ -233,6 +233,33 @@
             margin-bottom: 10px;
         }
 
+        .sidebar-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .sidebar-title-row .sidebar-title { margin-bottom: 0; }
+
+        .sidebar-toggle {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.65em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .sidebar-toggle:hover { background: var(--accent-primary); color: #0a0e1a; border-color: var(--accent-primary); }
+        .sidebar-toggle.expanded { background: var(--accent-gradient); color: #0a0e1a; border-color: transparent; }
+
+        .quick-log-collapsed #quickLogContainer .quick-log-row:nth-child(n+4) { display: none; }
+        .quick-log-collapsed .sidebar-toggle { color: var(--accent-primary); }
+
         /* Compact Quick Log */
         .quick-log-row {
             display: flex;
@@ -812,12 +839,15 @@
     <div class="app-layout">
         <aside class="sidebar sidebar-left">
             <div class="sidebar-section">
-                <div class="sidebar-title">⚡ Quick Log</div>
+                <div class="sidebar-title-row">
+                    <div class="sidebar-title">⚡ Quick Log</div>
+                    <button class="sidebar-toggle" id="quickLogToggle" onclick="toggleQuickLog()" title="Show all exercises">All ▾</button>
+                </div>
                 <div id="quickLogContainer"></div>
             </div>
 
             <div class="sidebar-section">
-                <div class="sidebar-title">🎮 Apex</div>
+                <div class="sidebar-title">🎮 Apex Penalties</div>
                 <div class="situation-grid" id="situationGrid"></div>
             </div>
         </aside>
@@ -1055,7 +1085,14 @@
 
         function renderQuickLog() {
             const container = document.getElementById('quickLogContainer');
-            container.innerHTML = Object.entries(allExercises).map(([key, ex]) => {
+            // Default order: most-used exercises first (pushups, planks, squats),
+            // then the others. Backend doesn't tell us usage, but we order by frequency intent.
+            const priorityOrder = ['pushups', 'planks', 'squats', 'chest_stretch', 'neck_stretch', 'wall_sits', 'cat_cow'];
+            const ordered = Object.entries(allExercises).sort(([a], [b]) => {
+                const ia = priorityOrder.indexOf(a); const ib = priorityOrder.indexOf(b);
+                return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+            });
+            container.innerHTML = ordered.map(([key, ex]) => {
                 const presets = allPresets[key] || [];
                 return `
                     <div class="quick-log-row">
@@ -1067,6 +1104,32 @@
                     </div>
                 `;
             }).join('');
+            applyQuickLogCollapsed();
+        }
+
+        function toggleQuickLog() {
+            const sidebar = document.querySelector('.sidebar-left');
+            const btn = document.getElementById('quickLogToggle');
+            const collapsed = sidebar.classList.toggle('quick-log-collapsed');
+            btn.classList.toggle('expanded', !collapsed);
+            btn.textContent = collapsed ? 'All ▾' : 'Less ▴';
+            try { localStorage.setItem('fm.quicklog.expanded', collapsed ? '0' : '1'); } catch (e) {}
+        }
+
+        function applyQuickLogCollapsed() {
+            let expanded = '0';
+            try { expanded = localStorage.getItem('fm.quicklog.expanded') || '0'; } catch (e) {}
+            const sidebar = document.querySelector('.sidebar-left');
+            const btn = document.getElementById('quickLogToggle');
+            if (expanded === '1') {
+                sidebar.classList.remove('quick-log-collapsed');
+                btn.classList.add('expanded');
+                btn.textContent = 'Less ▴';
+            } else {
+                sidebar.classList.add('quick-log-collapsed');
+                btn.classList.remove('expanded');
+                btn.textContent = 'All ▾';
+            }
         }
 
         function jumpToHowTo(exerciseType) {

@@ -159,7 +159,8 @@ const userMigrations = [
   { name: 'current_rank', sql: "ALTER TABLE user_stats ADD COLUMN current_rank TEXT DEFAULT 'Bronze IV'" },
   { name: 'packs_opened', sql: 'ALTER TABLE user_stats ADD COLUMN packs_opened INTEGER DEFAULT 0' },
   { name: 'streak_freeze_available', sql: 'ALTER TABLE user_stats ADD COLUMN streak_freeze_available INTEGER DEFAULT 0' },
-  { name: 'legend_week_start', sql: 'ALTER TABLE user_stats ADD COLUMN legend_week_start TEXT' }
+  { name: 'legend_week_start', sql: 'ALTER TABLE user_stats ADD COLUMN legend_week_start TEXT' },
+  { name: 'current_season_id', sql: 'ALTER TABLE user_stats ADD COLUMN current_season_id INTEGER' }
 ];
 
 userMigrations.forEach(m => {

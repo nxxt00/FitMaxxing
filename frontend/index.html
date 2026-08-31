@@ -155,6 +155,23 @@
         .rank-badge.rank-master    { border-color: #ef4444; box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.5); }
         .rank-badge.rank-predator  { border-color: #f43f5e; box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.55); animation: predatorPulse 2.4s ease-in-out infinite; }
 
+        /* Season badge — Apex-style split timer + hard reset */
+        .season-badge {
+            display: flex; flex-direction: column; align-items: stretch;
+            gap: 4px; padding: 6px 10px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-left: 3px solid #06b6d4;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        .season-badge.urgent { border-left-color: #ef4444; animation: predatorPulse 1.8s ease-in-out infinite; }
+        .season-label { font-size: 0.7em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #06b6d4; }
+        .season-countdown { font-size: 0.95em; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+        .season-countdown small { font-size: 0.7em; color: var(--text-muted); font-weight: 600; }
+        .season-progress-bar { background: var(--bg-secondary); border-radius: 999px; height: 3px; overflow: hidden; }
+        .season-progress-fill { background: #06b6d4; height: 100%; transition: width 1s linear; }
+
         @keyframes predatorPulse {
             0%, 100% { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.55), 0 0 0 rgba(244, 63, 94, 0); }
             50%      { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.85), 0 0 18px rgba(244, 63, 94, 0.35); }
@@ -1066,6 +1083,12 @@
                     <span class="rank-difficulty" id="rankDifficulty">1.000x</span>
                 </div>
 
+                <div class="season-badge" id="seasonBadge" title="Apex-style ranked season — 6 weeks per split, hard reset on expiry">
+                    <div class="season-label" id="seasonLabel">Season 1 · Split 1</div>
+                    <div class="season-countdown" id="seasonCountdown">--d --h</div>
+                    <div class="season-progress-bar"><div class="season-progress-fill" id="seasonProgressFill"></div></div>
+                </div>
+
                 <div class="legend-card-dash" id="legendDashCard" onclick="openLegendModal()" style="--legend-color: #a78bfa;">
                     <span class="legend-emoji" id="legendDashEmoji">👻</span>
                     <div class="legend-info">
@@ -1285,7 +1308,42 @@
             userStats = await apiGet('/api/stats');
             selectedLegend = userStats.selected_legend;
             updateStatsUI();
+            updateSeasonUI(userStats.season);
         }
+
+        function updateSeasonUI(season) {
+            if (!season) return;
+            const badge = document.getElementById('seasonBadge');
+            const labelEl = document.getElementById('seasonLabel');
+            const countEl = document.getElementById('seasonCountdown');
+            const fillEl = document.getElementById('seasonProgressFill');
+            if (!badge || !labelEl || !countEl || !fillEl) return;
+
+            labelEl.textContent = season.label;
+            const startsAt = new Date(season.starts_at);
+            const endsAt = new Date(season.ends_at);
+            const now = new Date();
+            const totalMs = endsAt - startsAt;
+            const remainingMs = Math.max(0, endsAt - now);
+            const elapsedMs = totalMs - remainingMs;
+            const percent = totalMs > 0 ? Math.max(0, Math.min(100, (elapsedMs / totalMs) * 100)) : 0;
+
+            const days = Math.floor(remainingMs / 86400000);
+            const hours = Math.floor((remainingMs % 86400000) / 3600000);
+            const mins = Math.floor((remainingMs % 3600000) / 60000);
+            countEl.innerHTML = remainingMs > 0
+                ? `${days}<small>d</small> ${hours}<small>h</small> ${mins}<small>m</small>`
+                : '<span style="color: #ef4444">RANK RESET</span>';
+
+            fillEl.style.width = `${percent}%`;
+            // Urgent state when < 7 days remain
+            badge.classList.toggle('urgent', remainingMs > 0 && remainingMs < 7 * 86400000);
+        }
+
+        // Tick the countdown every 60s
+        setInterval(() => {
+            if (userStats && userStats.season) updateSeasonUI(userStats.season);
+        }, 60000);
 
         function updateStatsUI() {
             document.getElementById('level').textContent = userStats.level;
@@ -1486,6 +1544,9 @@
             handleWorkoutResponse(data, situation.text);
         }
 
+        // Track the last-known season so we can detect a rollover
+        let lastKnownSeasonId = null;
+
         function handleWorkoutResponse(data, label) {
             if (data.success) {
                 const bonusText = data.bonusApplied ? ` (${data.multiplier.toFixed(2)}x!)` : '';
@@ -1498,6 +1559,17 @@
                 });
                 // Pulse the XP bar so the gain feels physical
                 pulseXpFill();
+                // Detect a season rollover and announce it
+                if (data.season && lastKnownSeasonId && data.season.id !== lastKnownSeasonId) {
+                    setTimeout(() => showNotification({
+                        title: `New season: ${data.season.label}`,
+                        sub: 'Rank has been reset to Bronze IV. Climb again.',
+                        type: 'rank-up',
+                        icon: '🏆',
+                        duration: 7000
+                    }), 800);
+                }
+                if (data.season) lastKnownSeasonId = data.season.id;
                 loadStats();
                 loadDailyChallenges();
                 loadWeeklyGoal();
@@ -2036,7 +2108,7 @@
         }
 
         initTheme();
-        loadStats();
+        loadStats().then(() => { if (userStats.season) lastKnownSeasonId = userStats.season.id; });
         loadQuickLog();
         loadSituations();
         loadDailyChallenges();

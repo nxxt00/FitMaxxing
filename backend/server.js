@@ -37,7 +37,8 @@ db.exec(`
     selected_legend TEXT DEFAULT 'wraith',
     season_xp INTEGER DEFAULT 0,
     current_rank TEXT DEFAULT 'Bronze IV',
-    packs_opened INTEGER DEFAULT 0
+    packs_opened INTEGER DEFAULT 0,
+    current_season_id INTEGER
   );
   
   CREATE TABLE IF NOT EXISTS achievements (
@@ -65,6 +66,21 @@ db.exec(`
     FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_rp_ledger_workout ON workout_rp_ledger(workout_id);
+
+  -- Seasons: Apex-style ranked splits. Each season is ~6 weeks; rank resets
+  -- to lowest tier (Bronze IV) at season end. Matches Apex's "split" cadence
+  -- (6-7 weeks per split per EA's official 2025-2026 ranked schedule).
+  -- Two splits per numbered season; we use one row per split for simplicity.
+  CREATE TABLE IF NOT EXISTS seasons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season_number INTEGER NOT NULL,
+    split_number INTEGER NOT NULL DEFAULT 1,
+    label TEXT NOT NULL,                       -- e.g. "Season 1 · Split 1"
+    starts_at TEXT NOT NULL,                   -- ISO datetime
+    ends_at TEXT NOT NULL,                     -- ISO datetime
+    completed INTEGER DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons(starts_at, ends_at);
 
   CREATE TABLE IF NOT EXISTS daily_challenges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,6 +248,63 @@ function getRankProgress(seasonXP) {
     needed: needed,
     percent: Math.round((progress / needed) * 100)
   };
+}
+
+// === Season system ===
+// Apex splits are ~6-7 weeks. We use 6 weeks (42 days) per split.
+// Two splits per numbered season. Hard reset to lowest tier on expiry.
+const SPLIT_DURATION_DAYS = 42;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+function ensureActiveSeason() {
+  const now = new Date();
+  // Find any season that contains `now`
+  const active = db.prepare(
+    "SELECT * FROM seasons WHERE starts_at <= ? AND ends_at > ? AND completed = 0 ORDER BY id DESC LIMIT 1"
+  ).get(now.toISOString(), now.toISOString());
+  if (active) return active;
+
+  // Otherwise: close any expired, non-completed seasons (hard reset) and create the next one
+  const expired = db.prepare(
+    "SELECT * FROM seasons WHERE ends_at <= ? AND completed = 0"
+  ).all(now.toISOString());
+  for (const s of expired) {
+    db.prepare('UPDATE seasons SET completed = 1 WHERE id = ?').run(s.id);
+    db.prepare('UPDATE user_stats SET season_xp = 0, current_rank = ? WHERE id = 1').run(RANK_TIERS[0].name);
+  }
+
+  // Find the most recent season to compute the next number
+  const last = db.prepare('SELECT * FROM seasons ORDER BY id DESC LIMIT 1').get();
+  let nextSeasonNumber = 1;
+  let nextSplit = 1;
+  if (last) {
+    nextSeasonNumber = last.season_number;
+    nextSplit = last.split_number + 1;
+    if (nextSplit > 2) { nextSplit = 1; nextSeasonNumber += 1; }
+  }
+  const label = `Season ${nextSeasonNumber} · Split ${nextSplit}`;
+  const startsAt = now;
+  const endsAt = new Date(now.getTime() + SPLIT_DURATION_DAYS * MS_PER_DAY);
+  const result = db.prepare(
+    'INSERT INTO seasons (season_number, split_number, label, starts_at, ends_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(nextSeasonNumber, nextSplit, label, startsAt.toISOString(), endsAt.toISOString());
+  // Bind user_stats to the new season (and ensure reset tier is lowest)
+  db.prepare('UPDATE user_stats SET current_season_id = ? WHERE id = 1').run(result.lastInsertRowid);
+  return db.prepare('SELECT * FROM seasons WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function getActiveSeason() {
+  return ensureActiveSeason();
+}
+
+function getSeasonTimeRemaining(season) {
+  const now = new Date();
+  const end = new Date(season.ends_at);
+  const remainingMs = Math.max(0, end - now);
+  const days = Math.floor(remainingMs / MS_PER_DAY);
+  const hours = Math.floor((remainingMs % MS_PER_DAY) / (1000 * 60 * 60));
+  const mins = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+  return { days, hours, mins, totalMs: remainingMs };
 }
 
 // Exercise definitions
@@ -1042,8 +1115,10 @@ app.post('/api/workouts', (req, res) => {
     recordBonus(25, 'level_up');
     db.prepare('UPDATE user_stats SET season_xp = season_xp + 25 WHERE id = 1').run();
   }
+  // Touch the season system so it auto-rolls on expiry
+  const activeSeason = getActiveSeason();
   const rankChanged = newRank !== stats.current_rank;
-  
+
   res.json({
     success: true,
     xpEarned,
@@ -1062,7 +1137,8 @@ app.post('/api/workouts', (req, res) => {
     newRank,
     completedChallenges,
     weeklyGoalCompleted: weeklyResult,
-    streakBonus
+    streakBonus,
+    season: activeSeason
   });
 });
 
@@ -1120,18 +1196,27 @@ app.delete('/api/workouts/:id', (req, res) => {
 });
 
 app.get('/api/stats', (req, res) => {
+  // Touch the season system first so it can auto-roll if expired
+  const season = getActiveSeason();
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
   const xpForNextLevel = stats.level * 500;
   const xpInCurrentLevel = stats.total_xp - ((stats.level - 1) * 500);
   const rankProgress = getRankProgress(stats.season_xp);
-  
+
   res.json({
     ...stats,
     xpForNextLevel,
     xpInCurrentLevel,
     progressPercent: Math.round((xpInCurrentLevel / 500) * 100),
-    rankProgress
+    rankProgress,
+    season
   });
+});
+
+app.get('/api/season', (req, res) => {
+  const season = getActiveSeason();
+  const remaining = getSeasonTimeRemaining(season);
+  res.json({ ...season, remaining });
 });
 
 app.get('/api/workouts', (req, res) => {

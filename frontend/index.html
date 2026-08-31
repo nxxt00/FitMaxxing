@@ -1034,16 +1034,16 @@
 
         @media (max-width: 1200px) {
             .app-layout { grid-template-columns: 280px 1fr; }
-            .sidebar-right { display: none; }
+            .sidebar-right { display: block; }
         }
 
         @media (max-width: 900px) {
-            /* Reorder so stats-bar comes first, then quick log, then main */
+            /* Reorder on mobile: stats-bar → main → quick log → weekly/daily goals */
             .app-layout { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
             .sidebar { position: static; max-height: none; }
             .sidebar-left { order: 2; }   /* Quick log + Apex below main content */
             .main-content { order: 1; }   /* Stats + tabs on top */
-            .sidebar-right { order: 3; display: none; } /* hide on tablet/mobile */
+            .sidebar-right { order: 3; display: block; } /* show weekly + dailies on mobile */
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .tab-nav { flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
             .tab-nav::-webkit-scrollbar { height: 4px; }

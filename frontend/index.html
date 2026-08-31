@@ -327,8 +327,35 @@
         .sidebar-toggle:hover { background: var(--accent-primary); color: #0a0e1a; border-color: var(--accent-primary); }
         .sidebar-toggle.expanded { background: var(--accent-gradient); color: #0a0e1a; border-color: transparent; }
 
-        .quick-log-collapsed #quickLogContainer .quick-log-row:nth-child(n+4) { display: none; }
+        .quick-log-collapsed #quickLogContainer .quick-log-section:nth-of-type(n+2) { display: none; }
+        .quick-log-collapsed .quick-log-section .quick-log-row:nth-child(n+3) { display: none; }
         .quick-log-collapsed .sidebar-toggle { color: var(--accent-primary); }
+
+        /* Quick Log sections (Strength / Stretch) */
+        .quick-log-section { margin-bottom: 8px; }
+        .quick-log-section:last-child { margin-bottom: 0; }
+        .quick-log-section-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            margin-bottom: 4px;
+            transition: background 0.15s;
+        }
+        .quick-log-section-header:hover { background: var(--bg-secondary); }
+        .quick-log-section-title { font-size: 0.78em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+        .quick-log-section-title.strength { color: #f59e0b; }
+        .quick-log-section-title.stretch  { color: #10b981; }
+        .quick-log-section-toggle { font-size: 0.7em; color: var(--text-muted); transition: transform 0.2s; }
+        .quick-log-section.collapsed .quick-log-section-toggle { transform: rotate(-90deg); }
+        .quick-log-section.collapsed .quick-log-row { display: none; }
+
+        /* Difficulty stars (1-5) */
+        .diff-stars { color: #f59e0b; font-size: 0.85em; letter-spacing: -1px; }
+        .diff-stars .empty { color: var(--text-muted); }
 
         /* Compact Quick Log */
         .quick-log-row {
@@ -1094,8 +1121,7 @@
             </div>
 
             <div class="tab-nav">
-                <button class="tab-button active" onclick="switchTab('exercises')">💪 Exercises</button>
-                <button class="tab-button" onclick="switchTab('howto')">📚 How To</button>
+                <button class="tab-button active" onclick="switchTab('howto')">📚 How To</button>
                 <button class="tab-button" onclick="switchTab('programs')">📋 Programs</button>
                 <button class="tab-button" onclick="switchTab('perks')">⚡ Perks</button>
                 <button class="tab-button" onclick="switchTab('achievements')">🏆</button>
@@ -1103,12 +1129,7 @@
             </div>
 
             <div class="tab-content">
-                <div class="tab-panel active" id="exercises">
-                    <h2 class="section-title">Exercises</h2>
-                    <div class="exercise-grid" id="exerciseList"></div>
-                </div>
-
-                <div class="tab-panel" id="howto">
+                <div class="tab-panel active" id="howto">
                     <h2 class="section-title">📚 How To</h2>
                     <div id="howtoList"></div>
                 </div>
@@ -1308,31 +1329,42 @@
             const summary = await apiGet('/api/today-summary');
             todaySummary = summary.perExercise || {};
             renderQuickLog();
-            renderExercises();
             renderHowTo();
+        }
+
+        // Render 1-5 stars for difficulty
+        function difficultyStars(level) {
+            const max = 5;
+            const filled = '★'.repeat(Math.max(0, Math.min(max, level || 0)));
+            const empty = '☆'.repeat(max - filled.length);
+            return `<span class="diff-stars">${filled}<span class="empty">${empty}</span></span>`;
         }
 
         function renderQuickLog() {
             const container = document.getElementById('quickLogContainer');
-            // Default order: most-used exercises first (pushups, planks, squats),
-            // then the others. Backend doesn't tell us usage, but we order by frequency intent.
-            const priorityOrder = ['pushups', 'planks', 'squats', 'chest_stretch', 'neck_stretch', 'wall_sits', 'cat_cow'];
-            const ordered = Object.entries(allExercises).sort(([a], [b]) => {
-                const ia = priorityOrder.indexOf(a); const ib = priorityOrder.indexOf(b);
+            // Bucket by category from backend
+            const strength = Object.entries(allExercises).filter(([, ex]) => ex.category === 'strength');
+            const stretch  = Object.entries(allExercises).filter(([, ex]) => ex.category === 'stretch');
+            // Strength order: pushups first (featured), then the rest
+            const strengthPriority = ['pushups', 'planks', 'dead_bugs', 'squats', 'wall_sits'];
+            strength.sort(([a], [b]) => {
+                const ia = strengthPriority.indexOf(a); const ib = strengthPriority.indexOf(b);
                 return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
             });
-            container.innerHTML = ordered.map(([key, ex]) => {
+            // Stretch order: chest, neck (alphabetical is fine)
+            stretch.sort(([a], [b]) => a.localeCompare(b));
+
+            const renderRow = ([key, ex]) => {
                 const presets = allPresets[key] || [];
                 const t = todaySummary[key];
                 const todayReps = t ? t.reps : 0;
-                const todayUnit = ex.unit;
                 const todayLabel = todayReps > 0
-                    ? `today: ${todayReps} ${todayUnit}`
+                    ? `today: ${todayReps} ${ex.unit}`
                     : 'today: 0';
                 return `
                     <div class="quick-log-row" data-exercise="${key}">
                         <div class="quick-log-name">
-                            <span>${ex.name}</span>
+                            <span>${ex.name} ${difficultyStars(ex.difficulty)}</span>
                             <span class="quick-log-today ${todayReps === 0 ? 'zero' : ''}">${todayLabel}</span>
                         </div>
                         <div class="quick-log-buttons">
@@ -1341,8 +1373,31 @@
                         <button class="info-btn" onclick="jumpToHowTo('${key}')" title="Watch tutorial">i</button>
                     </div>
                 `;
-            }).join('');
+            };
+
+            const sectionHtml = (cat, label, entries) => {
+                if (entries.length === 0) return '';
+                const stored = (() => { try { return localStorage.getItem(`fm.quicklog.${cat}.collapsed`) === '1'; } catch (e) { return false; } })();
+                return `
+                    <div class="quick-log-section ${cat} ${stored ? 'collapsed' : ''}" data-section="${cat}">
+                        <div class="quick-log-section-header" onclick="toggleQuickLogSection('${cat}')">
+                            <span class="quick-log-section-title ${cat}">${label}</span>
+                            <span class="quick-log-section-toggle">▼</span>
+                        </div>
+                        ${entries.map(renderRow).join('')}
+                    </div>
+                `;
+            };
+
+            container.innerHTML = sectionHtml('strength', '💪 Strength', strength) + sectionHtml('stretch', '🧘 Stretch', stretch);
             applyQuickLogCollapsed();
+        }
+
+        function toggleQuickLogSection(cat) {
+            const section = document.querySelector(`.quick-log-section.${cat}`);
+            if (!section) return;
+            const collapsed = section.classList.toggle('collapsed');
+            try { localStorage.setItem(`fm.quicklog.${cat}.collapsed`, collapsed ? '1' : '0'); } catch (e) {}
         }
 
         function toggleQuickLog() {
@@ -1840,15 +1895,8 @@
         }
 
         function renderExercises() {
-            document.getElementById('exerciseList').innerHTML = Object.values(allExercises).map(ex => `
-                <div class="exercise-card">
-                    <div class="exercise-header">
-                        <div class="exercise-name">${ex.name} (${ex.unit})</div>
-                        <div class="exercise-badge">${ex.difficulty}</div>
-                    </div>
-                    <div class="exercise-description">${ex.description}</div>
-                </div>
-            `).join('');
+            // Removed: Exercises tab was redundant with How To. Kept as no-op
+            // so any stale callers don't blow up.
         }
 
         function renderHowTo() {
@@ -1915,7 +1963,7 @@
 
         // Keyboard shortcuts: 1-6 for tabs, [ / ] to cycle, Esc to close modals
         (function() {
-            const TABS = ['exercises', 'howto', 'programs', 'perks', 'achievements', 'history'];
+            const TABS = ['howto', 'programs', 'perks', 'achievements', 'history'];
             document.addEventListener('keydown', (e) => {
                 // Don't hijack typing in inputs
                 const tag = (e.target && e.target.tagName) || '';

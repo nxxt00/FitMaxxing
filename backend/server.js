@@ -44,8 +44,27 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     achievement_key TEXT NOT NULL UNIQUE,
     achievement_name TEXT NOT NULL,
-    unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    source_workout_id INTEGER
   );
+
+  -- Per-workout RP ledger. Records every bonus RP awarded in connection with a
+  -- specific workout so DELETE can refund exactly. Reasons:
+  --   'base'           — base workout RP (xp_earned * 0.4, always present)
+  --   'streak'         — streak milestone bonus (+50/+100/+200)
+  --   'achievement'    — +50 RP per achievement unlocked
+  --   'daily_complete' — +50 RP per daily challenge completed
+  --   'weekly_goal'    — weekly goal RP bonus
+  --   'level_up'       — +25 RP for crossing a level threshold
+  CREATE TABLE IF NOT EXISTS workout_rp_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workout_id INTEGER NOT NULL,
+    rp_amount INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_rp_ledger_workout ON workout_rp_ledger(workout_id);
 
   CREATE TABLE IF NOT EXISTS daily_challenges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +160,7 @@ if (!workoutColumnNames.has('unit')) {
   console.log('Migrating workouts: adding unit column');
   db.exec("ALTER TABLE workouts ADD COLUMN unit TEXT DEFAULT 'reps'");
   db.exec("UPDATE workouts SET unit = 'seconds' WHERE exercise_type IN ('planks', 'wall_sits')");
-  db.exec("UPDATE workouts SET unit = 'reps' WHERE exercise_type IN ('pushups', 'squats', 'stretches', 'chest_stretch', 'neck_stretch', 'cat_cow')");
+  db.exec("UPDATE workouts SET unit = 'reps' WHERE exercise_type IN ('pushups', 'squats', 'stretches', 'chest_stretch', 'neck_stretch', 'dead_bugs')");
 }
 
 if (!workoutColumnNames.has('source')) {
@@ -154,6 +173,13 @@ const perksColumnNames = new Set(perksColumns.map(c => c.name));
 if (!perksColumnNames.has('acquired_at')) {
   console.log('Migrating perks: adding acquired_at column');
   db.exec("ALTER TABLE perks ADD COLUMN acquired_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+}
+
+const achievementsColumns = db.prepare("PRAGMA table_info(achievements)").all();
+const achievementsColumnNames = new Set(achievementsColumns.map(c => c.name));
+if (!achievementsColumnNames.has('source_workout_id')) {
+  console.log('Migrating achievements: adding source_workout_id column');
+  db.exec("ALTER TABLE achievements ADD COLUMN source_workout_id INTEGER");
 }
 
 db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, selected_legend, season_xp, current_rank, packs_opened, streak_freeze_available) VALUES (1, 0, 1, 0, 0, ?, 0, ?, 0, 0)').run('wraith', 'Bronze IV');
@@ -210,15 +236,24 @@ function getRankProgress(seasonXP) {
 
 // Exercise definitions
 // Stretches curated for desk-sitters: doorway chest (rounded shoulders),
-// lateral neck flex (tech neck), cat-cow (thoracic mobility).
+// lateral neck flex (tech neck). Strength moves target posture-related muscle groups.
+// Exercise catalog. Each exercise carries:
+//   - category: 'strength' | 'stretch'  (used by Quick Log grouping + UI)
+//   - difficulty: 1-5 stars            (subjective rating; affects XP & UI display)
+//   - unit: 'reps' | 'seconds'          (what the user logs)
+// XP scaling per rep/second: base 10, multiplied by difficulty.
+// Difficulty → XP multiplier: 1★=0.6, 2★=0.8, 3★=1.0, 4★=1.3, 5★=1.6
+const DIFFICULTY_XP_MULTIPLIER = { 1: 0.6, 2: 0.8, 3: 1.0, 4: 1.3, 5: 1.6 };
 const EXERCISES = {
-  pushups: { name: 'Pushups', unit: 'reps', youtubeId: 'IODxDxX7oi4' },
-  planks: { name: 'Plank', unit: 'seconds', youtubeId: 'ASdvN_XEl_c' },
-  chest_stretch: { name: 'Chest Stretch', unit: 'seconds', youtubeId: 'O8rJw_TmC1Y' },
-  neck_stretch: { name: 'Neck Stretch', unit: 'seconds', youtubeId: 'FRNtLrMf-1A' },
-  cat_cow: { name: 'Cat-Cow', unit: 'reps', youtubeId: 'LIVJZZyZ2qM' },
-  squats: { name: 'Squats', unit: 'reps', youtubeId: 'aclHkVaku9U' },
-  wall_sits: { name: 'Wall Sit', unit: 'seconds', youtubeId: 'w7qVVT_h_lI' }
+  // === STRENGTH ===
+  pushups:      { name: 'Pushups',      unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'IODxDxX7oi4' },
+  dead_bugs:    { name: 'Dead Bugs',    unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'IpP8j8b3xY4' },
+  planks:       { name: 'Plank',        unit: 'seconds', category: 'strength', difficulty: 2, youtubeId: 'ASdvN_XEl_c' },
+  squats:       { name: 'Squats',       unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'aclHkVaku9U' },
+  wall_sits:    { name: 'Wall Sit',     unit: 'seconds', category: 'strength', difficulty: 2, youtubeId: 'w7qVVT_h_lI' },
+  // === STRETCH ===
+  chest_stretch:{ name: 'Chest Stretch',unit: 'seconds', category: 'stretch',  difficulty: 1, youtubeId: 'O8rJw_TmC1Y' },
+  neck_stretch: { name: 'Neck Stretch', unit: 'seconds', category: 'stretch',  difficulty: 1, youtubeId: 'FRNtLrMf-1A' },
 };
 
 const LEGENDS = {
@@ -226,7 +261,7 @@ const LEGENDS = {
     name: 'Wraith',
     title: 'The Void Pilot',
     perk: '+10% XP for core & stretches',
-    bonusTypes: ['planks', 'chest_stretch', 'neck_stretch', 'cat_cow'],
+    bonusTypes: ['planks', 'dead_bugs', 'chest_stretch', 'neck_stretch'],
     bonusMultiplier: 1.1,
     color: '#a78bfa',
     emoji: '👻'
@@ -244,7 +279,7 @@ const LEGENDS = {
     name: 'Lifeline',
     title: 'The Combat Medic',
     perk: '+15% XP for everything',
-    bonusTypes: ['pushups', 'planks', 'chest_stretch', 'neck_stretch', 'cat_cow', 'squats', 'wall_sits'],
+    bonusTypes: ['pushups', 'planks', 'dead_bugs', 'chest_stretch', 'neck_stretch', 'squats', 'wall_sits'],
     bonusMultiplier: 1.15,
     color: '#10b981',
     emoji: '💚'
@@ -308,17 +343,22 @@ const DAILY_CHALLENGE_TEMPLATES = [
 function generateDailyChallenges() {
   const today = new Date().toISOString().split('T')[0];
   const existing = db.prepare('SELECT COUNT(*) as count FROM daily_challenges WHERE challenge_date = ?').get(today);
-  
+
   if (existing.count > 0) return;
 
   const stats = db.prepare('SELECT current_rank FROM user_stats WHERE id = 1').get();
   const difficulty = getRankDifficulty(stats.current_rank);
-  
-  const shuffled = [...DAILY_CHALLENGE_TEMPLATES].sort(() => Math.random() - 0.5);
-  const selected = shuffled.slice(0, 3);
-  
+
+  // Always include a pushup challenge (Maxx: "pushups featured in every daily exercise")
+  const pushupTemplates = DAILY_CHALLENGE_TEMPLATES.filter(t => t.type === 'pushups');
+  const guaranteedPushup = pushupTemplates[Math.floor(Math.random() * pushupTemplates.length)];
+
+  const otherTemplates = DAILY_CHALLENGE_TEMPLATES.filter(t => t.key !== guaranteedPushup.key);
+  const shuffled = [...otherTemplates].sort(() => Math.random() - 0.5);
+  const selected = [guaranteedPushup, ...shuffled.slice(0, 2)];
+
   const insert = db.prepare('INSERT INTO daily_challenges (challenge_key, challenge_text, target_value, progress, xp_reward, challenge_date) VALUES (?, ?, ?, 0, ?, ?)');
-  
+
   selected.forEach(challenge => {
     const scaledTarget = Math.round(challenge.baseTarget * difficulty.challengeMultiplier);
     const scaledXP = Math.round(challenge.baseXP * difficulty.rewardMultiplier);
@@ -345,7 +385,7 @@ function updateDailyChallengeProgress(exerciseType, reps) {
       increment = reps;
     } else if (template.type === 'any') {
       increment = 1;
-    } else if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'cat_cow')) {
+    } else if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'dead_bugs')) {
       // Stretches count any posture work
       increment = reps;
     }
@@ -446,14 +486,14 @@ const PROGRAM_TEMPLATES = {
       { day: 1, exercise: 'pushups', target: 20 },
       { day: 2, exercise: 'squats', target: 30 },
       { day: 3, exercise: 'planks', target: 30 },
-      { day: 4, exercise: 'cat_cow', target: 15 },
+      { day: 4, exercise: 'dead_bugs', target: 15 },
       { day: 5, exercise: 'pushups', target: 25 },
       { day: 6, exercise: 'chest_stretch', target: 30 },
       { day: 7, exercise: 'rest', target: 0 },
       { day: 8, exercise: 'pushups', target: 30 },
       { day: 9, exercise: 'squats', target: 40 },
       { day: 10, exercise: 'planks', target: 45 },
-      { day: 11, exercise: 'cat_cow', target: 15 },
+      { day: 11, exercise: 'dead_bugs', target: 15 },
       { day: 12, exercise: 'pushups', target: 35 },
       { day: 13, exercise: 'wall_sits', target: 45 },
       { day: 14, exercise: 'rest', target: 0 },
@@ -467,7 +507,7 @@ const PROGRAM_TEMPLATES = {
       { day: 22, exercise: 'pushups', target: 60 },
       { day: 23, exercise: 'squats', target: 60 },
       { day: 24, exercise: 'planks', target: 90 },
-      { day: 25, exercise: 'cat_cow', target: 20 },
+      { day: 25, exercise: 'dead_bugs', target: 20 },
       { day: 26, exercise: 'wall_sits', target: 60 },
       { day: 27, exercise: 'pushups', target: 75 },
       { day: 28, exercise: 'rest', target: 0 }
@@ -480,23 +520,23 @@ const PROGRAM_TEMPLATES = {
     days: [
       { day: 1, exercise: 'chest_stretch', target: 60 },
       { day: 2, exercise: 'neck_stretch', target: 45 },
-      { day: 3, exercise: 'cat_cow', target: 20 },
-      { day: 4, exercise: 'cat_cow', target: 20 },
+      { day: 3, exercise: 'dead_bugs', target: 20 },
+      { day: 4, exercise: 'dead_bugs', target: 20 },
       { day: 5, exercise: 'chest_stretch', target: 90 },
       { day: 6, exercise: 'planks', target: 60 },
       { day: 7, exercise: 'rest', target: 0 },
       { day: 8, exercise: 'chest_stretch', target: 90 },
       { day: 9, exercise: 'neck_stretch', target: 60 },
-      { day: 10, exercise: 'cat_cow', target: 30 },
+      { day: 10, exercise: 'dead_bugs', target: 30 },
       { day: 11, exercise: 'planks', target: 75 },
-      { day: 12, exercise: 'cat_cow', target: 25 },
+      { day: 12, exercise: 'dead_bugs', target: 25 },
       { day: 13, exercise: 'wall_sits', target: 60 },
       { day: 14, exercise: 'rest', target: 0 },
       { day: 15, exercise: 'chest_stretch', target: 120 },
       { day: 16, exercise: 'planks', target: 90 },
       { day: 17, exercise: 'neck_stretch', target: 90 },
-      { day: 18, exercise: 'cat_cow', target: 35 },
-      { day: 19, exercise: 'cat_cow', target: 30 },
+      { day: 18, exercise: 'dead_bugs', target: 35 },
+      { day: 19, exercise: 'dead_bugs', target: 30 },
       { day: 20, exercise: 'planks', target: 120 },
       { day: 21, exercise: 'rest', target: 0 }
     ]
@@ -531,7 +571,7 @@ const PROGRAM_TEMPLATES = {
       { day: 23, exercise: 'squats', target: 300 },
       { day: 24, exercise: 'planks', target: 300 },
       { day: 25, exercise: 'wall_sits', target: 240 },
-      { day: 26, exercise: 'cat_cow', target: 30 },
+      { day: 26, exercise: 'dead_bugs', target: 30 },
       { day: 27, exercise: 'pushups', target: 350 },
       { day: 28, exercise: 'rest', target: 0 }
     ]
@@ -627,32 +667,34 @@ function openApexPack() {
 }
 
 function calculateXP(exerciseType, reps, selectedLegend, currentRank) {
-  const baseXP = reps * 10;
+  const exercise = EXERCISES[exerciseType] || { difficulty: 3 };
+  const difficultyMult = DIFFICULTY_XP_MULTIPLIER[exercise.difficulty] ?? 1.0;
+  const baseXP = reps * 10 * difficultyMult;
   const legend = LEGENDS[selectedLegend];
-  
+
   let multiplier = 1.0;
   let bonusApplied = false;
-  
+
   if (legend) {
     if (legend.bonusTypes.includes(exerciseType)) {
       multiplier = legend.bonusMultiplier;
       bonusApplied = true;
     }
-    
+
     if (legend.conditionalBonus && legend.conditionalBonus.type === exerciseType && reps >= legend.conditionalBonus.minReps) {
       multiplier = legend.conditionalBonus.multiplier;
       bonusApplied = true;
     }
   }
-  
+
   // Apply rank-based reward multiplier (compensates for harder challenges)
   const rankDifficulty = getRankDifficulty(currentRank);
   multiplier *= rankDifficulty.rewardMultiplier;
-  
+
   const finalXP = Math.round(baseXP * multiplier);
   // RP is 40% of XP for rank grind - makes rank feel more prestigious
   const finalRP = Math.round(finalXP * 0.4);
-  
+
   return {
     xp: finalXP,
     rp: finalRP,
@@ -711,7 +753,7 @@ function dailyChallengeIncrement(template, exerciseType, reps) {
   if (template.type === exerciseType) return reps;
   if (template.type === 'total') return reps;
   if (template.type === 'any') return 1;
-  if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'cat_cow')) {
+  if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'dead_bugs')) {
     return reps;
   }
   return 0;
@@ -780,20 +822,31 @@ function recomputeStreaks() {
 // Revoke achievements no longer satisfied by current stats
 function recheckAchievements() {
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  // We need a minimal stats-shape for checkAchievements (just total_xp, current_streak, level, current_rank)
-  const earned = db.prepare('SELECT achievement_key FROM achievements').all().map(r => r.achievement_key);
-  if (earned.length === 0) return [];
-  // Build a fake "workout" arg (not used for most checks; needed for first_workout which only checks total_xp > 0)
+  const earned = db.prepare('SELECT achievement_key, source_workout_id FROM achievements').all();
+  if (earned.length === 0) return { revoked: [], refundsNeeded: 0 };
+
   const stillEarned = checkAchievements({}, stats);
   const stillKeys = new Set(stillEarned.map(a => a.key));
   const revoked = [];
-  for (const key of earned) {
-    if (!stillKeys.has(key)) {
-      db.prepare('DELETE FROM achievements WHERE achievement_key = ?').run(key);
-      revoked.push(key);
+  let refundsNeeded = 0;
+  const ACHIEVEMENT_RP_BONUS = 50;
+
+  for (const row of earned) {
+    if (!stillKeys.has(row.achievement_key)) {
+      // If the source workout is still alive, the +50 RP is still in its
+      // ledger (we'll need to refund manually). If the source workout was
+      // already deleted, the ledger row was already removed and refunded
+      // via totalRpRefund, so don't double-count.
+      const sourceAlive = row.source_workout_id
+        && db.prepare('SELECT id FROM workouts WHERE id = ?').get(row.source_workout_id);
+      if (sourceAlive) {
+        refundsNeeded += ACHIEVEMENT_RP_BONUS;
+      }
+      db.prepare('DELETE FROM achievements WHERE achievement_key = ?').run(row.achievement_key);
+      revoked.push(row.achievement_key);
     }
   }
-  return revoked;
+  return { revoked, refundsNeeded };
 }
 
 // Quick-log presets
@@ -812,6 +865,12 @@ const QUICK_PRESETS = {
     { label: '+60s', value: 60 },
     { label: '+90s', value: 90 }
   ],
+  dead_bugs: [
+    { label: '+5', value: 5 },
+    { label: '+10', value: 10 },
+    { label: '+15', value: 15 },
+    { label: '+20', value: 20 }
+  ],
   chest_stretch: [
     { label: '+15s', value: 15 },
     { label: '+30s', value: 30 },
@@ -821,11 +880,6 @@ const QUICK_PRESETS = {
     { label: '+10s', value: 10 },
     { label: '+20s', value: 20 },
     { label: '+30s', value: 30 }
-  ],
-  cat_cow: [
-    { label: '+5', value: 5 },
-    { label: '+10', value: 10 },
-    { label: '+15', value: 15 }
   ],
   squats: [
     { label: '+10', value: 10 },
@@ -884,16 +938,25 @@ app.post('/api/workouts', (req, res) => {
   const rpEarned = xpCalc.rp;
   const today = new Date().toISOString().split('T')[0];
   
-  db.prepare('INSERT INTO workouts (exercise_type, reps, unit, xp_earned, notes, source) VALUES (?, ?, ?, ?, ?, ?)').run(exerciseType, reps, exercise.unit, xpEarned, notes || '', source);
-  
+  const result = db.prepare('INSERT INTO workouts (exercise_type, reps, unit, xp_earned, notes, source) VALUES (?, ?, ?, ?, ?, ?)').run(exerciseType, reps, exercise.unit, xpEarned, notes || '', source);
+  const workoutId = result.lastInsertRowid;
+
+  // Helper: record a bonus RP entry in the ledger for this workout
+  const recordBonus = (amount, reason) => {
+    if (amount > 0) {
+      db.prepare('INSERT INTO workout_rp_ledger (workout_id, rp_amount, reason) VALUES (?, ?, ?)').run(workoutId, amount, reason);
+    }
+  };
+
   let totalXpGained = xpEarned;
   let totalRpGained = rpEarned;
-  
+  recordBonus(rpEarned, 'base');
+
   const newTotalXP = stats.total_xp + totalXpGained;
   const newLevel = calculateLevel(newTotalXP);
   const newSeasonXP = stats.season_xp + totalRpGained;
   const newRank = getRank(newSeasonXP);
-  
+
   let newStreak = stats.current_streak;
   if (!stats.last_workout_date) {
     newStreak = 1;
@@ -901,7 +964,7 @@ app.post('/api/workouts', (req, res) => {
     const lastDate = new Date(stats.last_workout_date);
     const todayDate = new Date(today);
     const daysDiff = Math.floor((todayDate - lastDate) / (1000 * 60 * 60 * 24));
-    
+
     if (daysDiff === 0) {
       newStreak = stats.current_streak;
     } else if (daysDiff === 1) {
@@ -910,66 +973,75 @@ app.post('/api/workouts', (req, res) => {
       newStreak = 1;
     }
   }
-  
+
   // Streak milestone bonus
   let streakBonus = null;
   const oldLongestStreak = stats.longest_streak;
   const newLongestStreak = Math.max(stats.longest_streak, newStreak);
-  
+
   if (newStreak === 7 && oldLongestStreak < 7) {
     totalRpGained += 50;
+    recordBonus(50, 'streak');
     streakBonus = { text: '7-day streak!', rp: 50 };
   } else if (newStreak === 14 && oldLongestStreak < 14) {
     totalRpGained += 100;
+    recordBonus(100, 'streak');
     streakBonus = { text: '14-day streak!', rp: 100 };
   } else if (newStreak === 30 && oldLongestStreak < 30) {
     totalRpGained += 200;
+    recordBonus(200, 'streak');
     streakBonus = { text: '30-day streak!', rp: 200 };
   }
-  
-  db.prepare(`UPDATE user_stats SET 
-    total_xp = ?, level = ?, current_streak = ?, longest_streak = ?, 
-    last_workout_date = ?, season_xp = ?, current_rank = ? 
+
+  db.prepare(`UPDATE user_stats SET
+    total_xp = ?, level = ?, current_streak = ?, longest_streak = ?,
+    last_workout_date = ?, season_xp = ?, current_rank = ?
     WHERE id = 1`).run(newTotalXP, newLevel, newStreak, newLongestStreak, today, stats.season_xp + totalRpGained, newRank);
-  
+
   const newStats = { total_xp: newTotalXP, level: newLevel, current_streak: newStreak, current_rank: newRank };
   const achievements = checkAchievements({ exerciseType, reps }, newStats);
-  
+
   let achievementRpBonus = 0;
   achievements.forEach(ach => {
-    db.prepare('INSERT INTO achievements (achievement_key, achievement_name) VALUES (?, ?)').run(ach.key, ach.name);
+    db.prepare('INSERT INTO achievements (achievement_key, achievement_name, source_workout_id) VALUES (?, ?, ?)').run(ach.key, ach.name, workoutId);
     achievementRpBonus += 50;
   });
-  
+  recordBonus(achievementRpBonus, 'achievement');
+
   if (achievementRpBonus > 0) {
     totalRpGained += achievementRpBonus;
     db.prepare('UPDATE user_stats SET season_xp = season_xp + ? WHERE id = 1').run(achievementRpBonus);
   }
-  
+
   const completedChallenges = updateDailyChallengeProgress(exerciseType, reps);
-  
+
+  let dailyCompletionRP = 0;
   completedChallenges.forEach(ch => {
     totalXpGained += ch.xpReward;
+    dailyCompletionRP += 50;
     totalRpGained += 50; // Bonus RP for completing challenges
   });
-  
+  recordBonus(dailyCompletionRP, 'daily_complete');
+
   if (completedChallenges.length > 0) {
     const finalTotalXP = newTotalXP + completedChallenges.reduce((sum, c) => sum + c.xpReward, 0);
     db.prepare('UPDATE user_stats SET total_xp = ?, level = ? WHERE id = 1').run(finalTotalXP, calculateLevel(finalTotalXP));
   }
-  
+
   const weeklyResult = updateWeeklyGoalProgress(exerciseType, reps);
   if (weeklyResult && weeklyResult.completed) {
     totalRpGained += weeklyResult.rp_bonus;
+    recordBonus(weeklyResult.rp_bonus, 'weekly_goal');
     db.prepare('UPDATE user_stats SET season_xp = season_xp + ? WHERE id = 1').run(weeklyResult.rp_bonus);
   }
-  
+
   let packDropped = null;
   if (newLevel > stats.level) {
     packDropped = openApexPack();
     totalRpGained += 25; // RP for leveling up
+    recordBonus(25, 'level_up');
     db.prepare('UPDATE user_stats SET season_xp = season_xp + 25 WHERE id = 1').run();
-  }  
+  }
   const rankChanged = newRank !== stats.current_rank;
   
   res.json({
@@ -1002,33 +1074,47 @@ app.delete('/api/workouts/:id', (req, res) => {
     return res.status(404).json({ error: 'Workout not found' });
   }
 
-  // 1) Roll back daily challenge + weekly goal progress for this workout
+  // 1) Refund ALL RP for this workout by summing the ledger (exact: base + bonuses)
+  // The ledger FK has ON DELETE CASCADE so when we delete the workout below,
+  // ledger rows go with it — so we read them BEFORE the delete.
+  const ledgerEntries = db.prepare('SELECT rp_amount, reason FROM workout_rp_ledger WHERE workout_id = ?').all(id);
+  const totalRpRefund = ledgerEntries.reduce((sum, e) => sum + e.rp_amount, 0);
+
+  // 2) Roll back daily challenge + weekly goal progress
   rollbackDailyChallengeProgress(workout.exercise_type, workout.reps);
   rollbackWeeklyGoalProgress(workout.exercise_type, workout.reps);
 
-  // 2) Delete the workout row
+  // 3) Delete the workout (cascades to ledger via FK)
   db.prepare('DELETE FROM workouts WHERE id = ?').run(id);
 
-  // 3) Refund XP and base RP from user_stats
+  // 4) Refund XP and RP from user_stats
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const rpRefund = Math.round(workout.xp_earned * 0.4);
   const newTotalXP = Math.max(0, stats.total_xp - workout.xp_earned);
   const newLevel = calculateLevel(newTotalXP);
-  const newSeasonXP = Math.max(0, stats.season_xp - rpRefund);
+  const newSeasonXP = Math.max(0, stats.season_xp - totalRpRefund);
   const newRank = getRank(newSeasonXP);
 
   db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`)
     .run(newTotalXP, newLevel, newSeasonXP, newRank);
 
-  // 4) Recompute streak from remaining workouts
+  // 5) Recompute streak from remaining workouts
   recomputeStreaks();
 
-  // 5) Revoke any achievement no longer met (best-effort — extra RP bonuses stay spent)
-  const revoked = recheckAchievements();
+  // 6) Revoke any achievement no longer met. The +50 RP per achievement was
+  //    already recorded in the source workout's ledger (reason='achievement'),
+  //    so when that source workout is deleted the RP refund flows through
+  //    `totalRpRefund` above. If the source workout is STILL alive (i.e.
+  //    this workout's deletion flipped a different achievement invalid), we
+  //    need to claw back the +50 separately.
+  const { revoked, refundsNeeded } = recheckAchievements();
+  if (refundsNeeded > 0) {
+    db.prepare('UPDATE user_stats SET season_xp = MAX(0, season_xp - ?) WHERE id = 1').run(refundsNeeded);
+  }
 
   res.json({
     success: true,
-    refunded: { xp: workout.xp_earned, rp: rpRefund },
+    refunded: { xp: workout.xp_earned, rp: totalRpRefund },
+    ledgerBreakdown: ledgerEntries,
     revokedAchievements: revoked
   });
 });
@@ -1091,140 +1177,115 @@ app.get('/api/achievements/progress', (req, res) => {
 });
 
 app.get('/api/exercises', (req, res) => {
-  const exerciseData = {
-    pushups: {
-      type: 'pushups',
-      name: 'Pushups',
-      unit: 'reps',
-      description: 'Classic pushups to strengthen chest, shoulders, and triceps. Keep your core tight and back straight for posture benefits.',
-      category: 'strength',
-      difficulty: 'beginner',
-      youtubeId: 'IODxDxX7oi4',
-      steps: [
-        'Start in plank position with hands shoulder-width apart, arms straight',
-        'Keep your body in a straight line from head to heels',
-        'Lower your chest toward the floor by bending your elbows (45° from body)',
-        'Go down until your chest nearly touches the floor',
-        'Push back up to starting position, fully extending arms',
-        'Keep core engaged throughout - no sagging hips or piked butt',
-        'Breathe in on the way down, out on the way up'
-      ]
-    },
-    planks: {
-      type: 'planks',
-      name: 'Plank',
-      unit: 'seconds',
-      description: 'Hold a plank position to build core strength. Essential for maintaining good posture throughout the day.',
-      category: 'core',
-      difficulty: 'beginner',
-      youtubeId: 'ASdvN_XEl_c',
-      steps: [
-        'Start on your forearms and toes, elbows directly under shoulders',
-        'Forearms parallel, hands can be clasped or flat on the floor',
-        'Keep your body in a straight line from head to heels',
-        'Engage your core - imagine pulling your belly button toward your spine',
-        'Squeeze your glutes and quads to keep hips level',
-        'Don\'t let hips sag down or pike up',
-        'Keep neck neutral - look at the floor about 30cm ahead of your hands',
-        'Hold for the target duration, breathing steadily'
-      ]
-    },
-    chest_stretch: {
-      type: 'chest_stretch',
-      name: 'Chest Stretch',
-      unit: 'seconds',
-      description: 'Doorway stretch to open up tight chest muscles from sitting at a desk. Counteracts rounded shoulders.',
-      category: 'mobility',
-      difficulty: 'beginner',
-      youtubeId: 'O8rJw_TmC1Y',
-      steps: [
-        'Stand in a doorway with arms at 90° on each side of the frame',
-        'Step one foot forward through the doorway',
-        'Lean forward gently until you feel a stretch across your chest',
-        'Keep your core engaged and back straight',
-        'Don\'t arch your lower back or let your head drop forward',
-        'Hold the stretch, breathing deeply',
-        'Step back and relax, then repeat'
-      ]
-    },
-    neck_stretch: {
-      type: 'neck_stretch',
-      name: 'Neck Stretch',
-      unit: 'seconds',
-      description: 'Gentle neck stretch to relieve tension from looking at screens. Helps with forward head posture.',
-      category: 'mobility',
-      difficulty: 'beginner',
-      youtubeId: 'FRNtLrMf-1A',
-      steps: [
-        'Sit or stand with good posture, shoulders relaxed',
-        'Tilt your head to the right, bringing your ear toward your shoulder',
-        'Use your right hand to gently pull your head further into the stretch',
-        'Keep your left shoulder down - don\'t let it rise up',
-        'Hold the stretch without bouncing',
-        'Slowly release and repeat on the other side',
-        'Keep breathing deeply throughout'
-      ]
-    },
-    cat_cow: {
-      type: 'cat_cow',
-      name: 'Cat-Cow',
-      unit: 'reps',
-      description: 'Spinal mobility exercise to relieve back tension and improve posture. Great between long sitting sessions.',
-      category: 'mobility',
-      difficulty: 'beginner',
-      youtubeId: 'LIVJZZyZ2qM',
-      steps: [
-        'Start on hands and knees in a tabletop position',
-        'Wrists under shoulders, knees under hips',
-        'Inhale: drop your belly, lift your chest and tailbone (Cow)',
-        'Look up gently, don\'t crank your neck',
-        'Exhale: round your spine, tuck chin to chest (Cat)',
-        'Engage your core, press hands into the floor',
-        'Move slowly between positions, syncing with breath'
-      ]
-    },
-    squats: {
-      type: 'squats',
-      name: 'Squats',
-      unit: 'reps',
-      description: 'Bodyweight squats to strengthen legs and core. Keep your chest up to reinforce good posture.',
-      category: 'strength',
-      difficulty: 'beginner',
-      youtubeId: 'aclHkVaku9U',
-      steps: [
-        'Stand with feet shoulder-width apart, toes slightly turned out',
-        'Keep your chest up and core engaged',
-        'Initiate the movement by pushing your hips back, not by bending knees first',
-        'Lower down as if sitting in a chair, keeping knees tracking over toes',
-        'Go down until thighs are parallel to the floor (or as low as comfortable)',
-        'Keep your weight in your heels and midfoot, not your toes',
-        'Drive through your heels to stand back up',
-        'Squeeze your glutes at the top of the movement'
-      ]
-    },
-    wall_sits: {
-      type: 'wall_sits',
-      name: 'Wall Sit',
-      unit: 'seconds',
-      description: 'Hold a wall sit position to build leg strength and endurance. Keep your back flat against the wall.',
-      category: 'strength',
-      difficulty: 'intermediate',
-      youtubeId: 'w7qVVT_h_lI',
-      steps: [
-        'Stand with your back against a wall, feet about 60cm away from the wall',
-        'Slide your back down the wall by bending your knees',
-        'Lower until your thighs are parallel to the floor (knees at 90°)',
-        'Keep your back flat against the wall the entire time',
-        'Knees should be directly above your ankles, not past your toes',
-        'Cross your arms over your chest or place hands on thighs',
-        'Keep core engaged and breathe normally',
-        'Hold for the target duration - aim to increase time progressively'
-      ]
-    }
-  };
-  res.json(exerciseData);
+  // Build from EXERCISES catalog + EXERCISE_DETAILS for description/steps/difficulty-label
+  const out = {};
+  for (const [key, ex] of Object.entries(EXERCISES)) {
+    const details = EXERCISE_DETAILS[key] || {};
+    out[key] = {
+      type: key,
+      name: ex.name,
+      unit: ex.unit,
+      category: ex.category,        // 'strength' | 'stretch'  (canonical)
+      subCategory: details.subCategory || ex.category, // legacy field, some UI uses it
+      difficulty: ex.difficulty,    // 1-5 number (UI may show as stars)
+      difficultyLabel: ex.difficulty >= 4 ? 'hard' : ex.difficulty <= 1 ? 'easy' : 'medium',
+      youtubeId: ex.youtubeId,
+      description: details.description || '',
+      steps: details.steps || []
+    };
+  }
+  res.json(out);
 });
 
+// Long-form exercise content (description, steps). Kept separate from EXERCISES
+// so the catalog stays a flat config and content is easier to edit.
+const EXERCISE_DETAILS = {
+  pushups: {
+    description: 'Classic pushups to strengthen chest, shoulders, and triceps. Keep your core tight and back straight for posture benefits.',
+    steps: [
+      'Start in plank position with hands shoulder-width apart, arms straight',
+      'Keep your body in a straight line from head to heels',
+      'Lower your chest toward the floor by bending your elbows (45° from body)',
+      'Go down until your chest nearly touches the floor',
+      'Push back up to starting position, fully extending arms',
+      'Keep core engaged throughout - no sagging hips or piked butt',
+      'Breathe in on the way down, out on the way up'
+    ]
+  },
+  planks: {
+    description: 'Hold a plank position to build core strength. Essential for maintaining good posture throughout the day.',
+    steps: [
+      'Start on your forearms and toes, elbows directly under shoulders',
+      'Forearms parallel, hands can be clasped or flat on the floor',
+      'Keep your body in a straight line from head to heels',
+      'Engage your core - imagine pulling your belly button toward your spine',
+      'Squeeze your glutes and quads to keep hips level',
+      'Don\'t let hips sag down or pike up',
+      'Keep neck neutral - look at the floor about 30cm ahead of your hands',
+      'Hold for the target duration, breathing steadily'
+    ]
+  },
+  dead_bugs: {
+    description: 'Core stability exercise that trains anti-extension and coordination. Key for lower-back health and posture.',
+    steps: [
+      'Lie on your back, arms reaching toward the ceiling, knees and hips at 90°',
+      'Press your lower back into the floor - this is your starting position',
+      'Slowly extend your right leg forward while lowering your left arm overhead',
+      'Keep your back glued to the floor - if it arches, reduce the range of motion',
+      'Return to the start with control, then switch sides (left leg, right arm)',
+      'Breathe out as you extend, in as you return',
+      'Move slowly - this is a coordination exercise, not a speed exercise'
+    ]
+  },
+  chest_stretch: {
+    description: 'Doorway stretch to open up tight chest muscles from sitting at a desk. Counteracts rounded shoulders.',
+    steps: [
+      'Stand in a doorway with arms at 90° on each side of the frame',
+      'Step one foot forward through the doorway',
+      'Lean forward gently until you feel a stretch across your chest',
+      'Keep your core engaged and back straight',
+      'Don\'t arch your lower back or let your head drop forward',
+      'Hold the stretch, breathing deeply',
+      'Step back and relax, then repeat'
+    ]
+  },
+  neck_stretch: {
+    description: 'Gentle neck stretch to relieve tension from looking at screens. Helps with forward head posture.',
+    steps: [
+      'Sit or stand with good posture, shoulders relaxed',
+      'Tilt your head to the right, bringing your ear toward your shoulder',
+      'Use your right hand to gently pull your head further into the stretch',
+      'Keep your left shoulder down - don\'t let it rise up',
+      'Hold the stretch without bouncing',
+      'Slowly release and repeat on the other side',
+      'Keep breathing deeply throughout'
+    ]
+  },
+  squats: {
+    description: 'Bodyweight squats to strengthen legs and core. Keep your chest up to reinforce good posture.',
+    steps: [
+      'Stand with feet shoulder-width apart, toes slightly turned out',
+      'Keep your chest up and core engaged',
+      'Initiate the movement by pushing your hips back, not by bending knees first',
+      'Lower down as if sitting in a chair, keeping knees tracking over toes',
+      'Go as low as your mobility allows - aim for thighs parallel to the floor',
+      'Drive through your heels to stand back up',
+      'Keep your knees out - don\'t let them collapse inward'
+    ]
+  },
+  wall_sits: {
+    description: 'Isometric leg hold that builds quad and glute endurance. Burns while you read.',
+    steps: [
+      'Stand with your back against a wall, feet about 60cm out',
+      'Slide down until your knees are at 90° and thighs are parallel to the floor',
+      'Keep your back flat against the wall',
+      'Engage your core and keep your knees over your ankles',
+      'Don\'t let your knees drift past your toes',
+      'Hold for the target duration, breathing steadily',
+      'Push through your heels to slide back up'
+    ]
+  }
+};
 app.get('/api/legends', (req, res) => {
   res.json(LEGENDS);
 });

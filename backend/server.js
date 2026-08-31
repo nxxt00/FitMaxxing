@@ -1196,11 +1196,12 @@ app.delete('/api/workouts/:id', (req, res) => {
     return res.status(404).json({ error: 'Workout not found' });
   }
 
-  // 1) Refund ALL RP for this workout by summing the ledger (exact: base + bonuses)
-  // The ledger FK has ON DELETE CASCADE so when we delete the workout below,
-  // ledger rows go with it — so we read them BEFORE the delete.
-  const ledgerEntries = db.prepare('SELECT rp_amount, reason FROM workout_rp_ledger WHERE workout_id = ?').all(id);
-  const totalRpRefund = ledgerEntries.reduce((sum, e) => sum + e.rp_amount, 0);
+  // 1) Refund ONLY the base RP for this workout (reason='base').
+  // Bonuses (streak, achievement, level-up, daily_complete, weekly_goal) are
+  // one-time rewards earned at the time; deleting a workout later shouldn't
+  // claw them back. Only the base RP (40% of workout XP) is refunded.
+  const baseRpRefundRow = db.prepare('SELECT SUM(rp_amount) as total FROM workout_rp_ledger WHERE workout_id = ? AND reason = ?').get(id, 'base');
+  const baseRpRefund = baseRpRefundRow?.total || 0;
 
   // 2) Roll back daily challenge + weekly goal progress
   rollbackDailyChallengeProgress(workout.exercise_type, workout.reps);
@@ -1209,11 +1210,11 @@ app.delete('/api/workouts/:id', (req, res) => {
   // 3) Delete the workout (cascades to ledger via FK)
   db.prepare('DELETE FROM workouts WHERE id = ?').run(id);
 
-  // 4) Refund XP and RP from user_stats
+  // 4) Refund XP and base RP from user_stats
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
   const newTotalXP = Math.max(0, stats.total_xp - workout.xp_earned);
   const newLevel = calculateLevel(newTotalXP);
-  const newSeasonXP = Math.max(0, stats.season_xp - totalRpRefund);
+  const newSeasonXP = Math.max(0, stats.season_xp - baseRpRefund);
   const newRank = getRank(newSeasonXP);
 
   db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`)
@@ -1235,8 +1236,7 @@ app.delete('/api/workouts/:id', (req, res) => {
 
   res.json({
     success: true,
-    refunded: { xp: workout.xp_earned, rp: totalRpRefund },
-    ledgerBreakdown: ledgerEntries,
+    refunded: { xp: workout.xp_earned, rp: baseRpRefund },
     revokedAchievements: revoked
   });
 });

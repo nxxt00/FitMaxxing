@@ -751,29 +751,54 @@
             position: fixed;
             top: 16px;
             right: 16px;
+            width: 340px;
+            max-width: calc(100vw - 32px);
             background: var(--bg-secondary);
             border: 2px solid var(--border);
+            border-left-width: 4px;
             color: var(--text-primary);
             padding: 12px 16px;
             border-radius: 10px;
             box-shadow: var(--shadow-lg);
             transform: translateX(400px);
-            transition: transform 0.4s;
+            transition: transform 0.4s cubic-bezier(.2,.8,.2,1), opacity 0.3s;
             z-index: 1000;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             font-weight: 600;
-            max-width: 320px;
             font-size: 0.85em;
+            margin-bottom: 10px;
+            opacity: 0;
+            pointer-events: none;
         }
 
-        .notification.show { transform: translateX(0); }
-        .notification.success { border-color: var(--success); }
-        .notification.achievement { border-color: var(--accent-primary); }
-        .notification.rank-up { border-color: var(--rarity-legendary); background: linear-gradient(135deg, var(--bg-secondary), rgba(245, 158, 11, 0.1)); }
-        .notification.pack { border-color: var(--legend-gradient); background: linear-gradient(135deg, var(--bg-secondary), rgba(124, 58, 237, 0.1)); }
-        .notification.error { border-color: var(--danger); }
+        .notification.show { transform: translateX(0); opacity: 1; pointer-events: auto; }
+        .notification.hide { transform: translateX(400px); opacity: 0; }
+
+        .notification-icon { font-size: 1.4em; flex-shrink: 0; }
+        .notification-body { flex: 1; min-width: 0; }
+        .notification-title { font-weight: 700; font-size: 0.95em; line-height: 1.2; }
+        .notification-sub { font-size: 0.78em; color: var(--text-secondary); margin-top: 2px; font-weight: 500; }
+
+        .notification-stack { position: fixed; top: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+        .notification-stack > * { pointer-events: auto; position: fixed; right: 16px; }
+        @media (max-width: 900px) {
+            .notification-stack { left: 12px; right: 12px; top: auto; bottom: 12px; align-items: stretch; }
+            .notification-stack > * { position: fixed; left: 12px; right: 12px; width: auto; }
+        }
+        .notification:nth-child(1) { top: 16px; }
+        .notification:nth-child(2) { top: 92px; }
+        .notification:nth-child(3) { top: 168px; }
+        .notification:nth-child(4) { top: 244px; }
+        .notification:nth-child(5) { top: 320px; }
+        .notification:nth-child(6) { top: 396px; }
+
+        .notification.success { border-left-color: var(--success); }
+        .notification.achievement { border-left-color: var(--accent-primary); }
+        .notification.rank-up { border-left-color: var(--rarity-legendary); background: linear-gradient(135deg, var(--bg-secondary), rgba(245, 158, 11, 0.1)); }
+        .notification.pack { border-left-color: #a78bfa; background: linear-gradient(135deg, var(--bg-secondary), rgba(124, 58, 237, 0.1)); }
+        .notification.error { border-left-color: var(--danger); }
 
         .empty-state { text-align: center; padding: 30px 16px; color: var(--text-muted); }
         .empty-state-icon { font-size: 2em; margin-bottom: 10px; opacity: 0.5; }
@@ -816,7 +841,6 @@
             .main-content { order: 1; }   /* Stats + tabs on top */
             .sidebar-right { order: 3; display: none; } /* hide on tablet/mobile */
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
-            .notification { top: auto; bottom: 16px; right: 12px; left: 12px; max-width: none; }
             .tab-nav { flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
             .tab-nav::-webkit-scrollbar { height: 4px; }
             .tab-nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -1006,7 +1030,7 @@
         </aside>
     </div>
 
-    <div id="notification" class="notification"></div>
+    <div id="notification-stack" class="notification-stack"></div>
 
         <div class="modal-overlay" id="legendModal" onclick="if(event.target===this) closeLegendModal()">
             <div class="modal">
@@ -1228,21 +1252,60 @@
         function handleWorkoutResponse(data, label) {
             if (data.success) {
                 const bonusText = data.bonusApplied ? ` (${data.multiplier.toFixed(2)}x!)` : '';
-                showNotification(`+${data.xpEarned} XP${bonusText} • +${data.rpEarned} RP - ${label}`, 'success');
+                showNotification({
+                    title: `+${data.xpEarned} XP${bonusText}`,
+                    sub: `+${data.rpEarned} RP · ${label}`,
+                    type: 'success',
+                    icon: '⚡',
+                    duration: 3500
+                });
                 loadStats();
                 loadDailyChallenges();
                 loadWeeklyGoal();
-                
-                if (data.rankChanged) setTimeout(() => showNotification(`🎖️ RANK UP! ${data.newRank} (harder challenges!)`, 'rank-up'), 1500);
+
+                if (data.rankChanged) setTimeout(() => showNotification({
+                    title: `RANK UP! ${data.newRank}`,
+                    sub: 'Harder challenges unlocked',
+                    type: 'rank-up',
+                    icon: '🎖️',
+                    duration: 6000
+                }), 1200);
                 if (data.packDropped && data.packDropped.items) {
                     setTimeout(() => {
-                        const itemNames = data.packDropped.items.map(i => i.name).join(', ');
-                        showNotification(`🎁 ${data.packDropped.rarity.toUpperCase()}: ${itemNames}`, 'pack');
-                    }, 3000);
+                        const itemNames = data.packDropped.items.map(i => `${i.rarity} ${i.name}`).join(', ');
+                        showNotification({
+                            title: `${data.packDropped.rarity.toUpperCase()} PACK`,
+                            sub: itemNames,
+                            type: 'pack',
+                            icon: '🎁',
+                            duration: 6000
+                        });
+                    }, 2400);
                 }
-                if (data.achievementsUnlocked.length > 0) setTimeout(() => showNotification(`🏆 ${data.achievementsUnlocked[0].name}`, 'achievement'), 4500);
-                if (data.completedChallenges && data.completedChallenges.length > 0) data.completedChallenges.forEach((ch, i) => setTimeout(() => showNotification(`⚔️ +${ch.xpReward} XP`, 'achievement'), 6000 + (i * 1500)));
-                if (data.weeklyGoalCompleted && data.weeklyGoalCompleted.completed) setTimeout(() => showNotification(`🎯 WEEKLY GOAL! +${data.weeklyGoalCompleted.rp_bonus} RP`, 'rank-up'), 7500);
+                if (data.achievementsUnlocked.length > 0) setTimeout(() => {
+                    const ach = data.achievementsUnlocked[0];
+                    showNotification({
+                        title: `Trophy: ${ach.name}`,
+                        sub: 'Achievement unlocked',
+                        type: 'achievement',
+                        icon: '🏆',
+                        duration: 5000
+                    });
+                }, 3600);
+                if (data.completedChallenges && data.completedChallenges.length > 0) data.completedChallenges.forEach((ch, i) => setTimeout(() => showNotification({
+                    title: `Daily Complete! +${ch.xpReward} XP`,
+                    sub: ch.text,
+                    type: 'achievement',
+                    icon: '⚔️',
+                    duration: 5000
+                }), 4800 + (i * 1200)));
+                if (data.weeklyGoalCompleted && data.weeklyGoalCompleted.completed) setTimeout(() => showNotification({
+                    title: `WEEKLY GOAL CLEARED!`,
+                    sub: `+${data.weeklyGoalCompleted.rp_bonus} RP bonus`,
+                    type: 'rank-up',
+                    icon: '🎯',
+                    duration: 6000
+                }), 6000);
             }
         }
 
@@ -1508,11 +1571,41 @@
             if (tabName === 'history') loadHistory();
         }
 
-        function showNotification(message, type = 'success') {
-            const notif = document.getElementById('notification');
-            notif.textContent = message;
-            notif.className = `notification ${type} show`;
-            setTimeout(() => notif.classList.remove('show'), 4000);
+        function showNotification(opts) {
+            // Supports both old signature (msg, type) and new object-based.
+            if (typeof opts === 'string') opts = { title: opts };
+            const { title = '', sub = '', type = 'success', icon, duration = 4000 } = opts;
+            const stack = document.getElementById('notification-stack');
+            const fallbackIcon = {
+                success: '✅', achievement: '🏆', 'rank-up': '🎖️', pack: '🎁', error: '⚠️'
+            };
+            const el = document.createElement('div');
+            el.className = `notification ${type}`;
+            el.innerHTML = `
+                <span class="notification-icon">${icon || fallbackIcon[type] || '•'}</span>
+                <div class="notification-body">
+                    <div class="notification-title">${title}</div>
+                    ${sub ? `<div class="notification-sub">${sub}</div>` : ''}
+                </div>
+            `;
+            stack.appendChild(el);
+            // Cap to 6 — drop oldest
+            while (stack.children.length > 6) stack.firstChild.remove();
+            // Animate in next frame
+            requestAnimationFrame(() => el.classList.add('show'));
+            const t = setTimeout(() => {
+                el.classList.remove('show');
+                el.classList.add('hide');
+                setTimeout(() => el.remove(), 400);
+            }, duration);
+            // Click to dismiss
+            el.addEventListener('click', () => {
+                clearTimeout(t);
+                el.classList.remove('show');
+                el.classList.add('hide');
+                setTimeout(() => el.remove(), 400);
+            });
+            return el;
         }
 
         initTheme();

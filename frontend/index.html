@@ -806,6 +806,25 @@
 
         .workout-history { max-height: 500px; overflow-y: auto; }
 
+        /* Stats dashboard */
+        .stats-block { margin-bottom: 18px; }
+        .stats-block-title { font-size: 0.85em; color: var(--text-secondary); font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+        .stats-grid-dash {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 8px;
+        }
+        .stat-card-dash {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 10px;
+            text-align: center;
+        }
+        .stat-card-label { font-size: 0.62em; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.03em; }
+        .stat-card-value { font-size: 1.35em; font-weight: 800; color: var(--text-primary); margin-top: 3px; }
+        .stat-card-sub { font-size: 0.6em; color: var(--text-muted); margin-top: 2px; }
+
         .history-summary {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -1112,6 +1131,7 @@
                 <button class="tab-button active" onclick="switchTab('howto')">📚 How To</button>
                 <button class="tab-button" onclick="switchTab('perks')">⚡ Perks</button>
                 <button class="tab-button" onclick="switchTab('achievements')">🏆</button>
+                <button class="tab-button" onclick="switchTab('stats')">📈 Stats</button>
                 <button class="tab-button" onclick="switchTab('history')">📊</button>
             </div>
 
@@ -1130,6 +1150,12 @@
                 <div class="tab-panel" id="achievements">
                     <h2 class="section-title">🏆 Trophies</h2>
                     <div class="achievement-grid" id="achievementGrid"></div>
+                </div>
+
+                <div class="tab-panel" id="stats">
+                    <h2 class="section-title">📈 Statistics</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.85em;">Your averages and totals across all time, this month, and this week.</p>
+                    <div id="statsDashboard"></div>
                 </div>
 
                 <div class="tab-panel" id="history">
@@ -1461,6 +1487,9 @@
                     tally.classList.remove('zero');
                 }
             }
+            // Instant-refresh history if it's the active tab
+            const histTab = document.getElementById('history');
+            if (histTab && histTab.classList.contains('active')) loadHistory();
         }
 
         async function loadSituations() {
@@ -1716,7 +1745,72 @@
             requestAnimationFrame(() => overlay.classList.add('show'));
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
         }
-        async function loadHistory() {
+
+            // Stats dashboard: daily / weekly / monthly averages from workout data
+        async function loadStatsDashboard() {
+            const container = document.getElementById('statsDashboard');
+            if (!container) return;
+            const workouts = await apiGet('/api/workouts');
+
+            const fmt = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n || 0));
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const dayKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+            const todayKey = dayKey(now);
+            const weekStart = new Date(now); weekStart.setHours(0,0,0,0); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+            let totalXP = 0, totalRP = 0, workoutCount = 0;
+            const activeDays = new Set();
+            const todayCount = workouts.filter(w => dayKey(new Date(w.created_at)) === todayKey).length;
+            const weekWorkouts = workouts.filter(w => new Date(w.created_at) >= weekStart);
+            const monthWorkouts = workouts.filter(w => new Date(w.created_at) >= monthStart);
+
+            for (const w of workouts) {
+                totalXP += w.xp_earned;
+                totalRP += Math.round(w.xp_earned * 0.4);
+                workoutCount++;
+                activeDays.add(dayKey(new Date(w.created_at)));
+            }
+            const activeDayCount = activeDays.size;
+            const totalDays = Math.max(1, activeDayCount);
+            const avDay = totalXP / totalDays;
+
+            const card = (label, value, sub = '') => `
+                <div class="stat-card-dash">
+                    <div class="stat-card-label">${label}</div>
+                    <div class="stat-card-value">${value}</div>
+                    ${sub ? `<div class="stat-card-sub">${sub}</div>` : ''}
+                </div>
+            `;
+
+            container.innerHTML = `
+                <div class="stats-block">
+                    <h3 class="stats-block-title">📊 All Time</h3>
+                    <div class="stats-grid-dash">
+                        ${card('Total XP', fmt(totalXP))}
+                        ${card('Total RP', fmt(totalRP))}
+                        ${card('Workouts', workoutCount)}
+                        ${card('Active Days', activeDayCount)}
+                        ${card('Avg XP / Day', fmt(avDay))}
+                        ${card('Current Streak', `${userStats.current_streak || 0} 🔥`)}
+                    </div>
+                </div>
+                <div class="stats-block">
+                    <h3 class="stats-block-title">⚡ Averages</h3>
+                    <div class="stats-grid-dash">
+                        ${card('Workouts / Day', (workoutCount / totalDays).toFixed(1))}
+                        ${card('This Week', `${weekWorkouts.length} sessions`)}
+                        ${card('This Month', `${monthWorkouts.length} sessions`)}
+                        ${card('Today', todayCount + ' session' + (todayCount === 1 ? '' : 's'))}
+                        ${card('Packs Opened', userStats.packs_opened || 0)}
+                        ${card('Longest Streak', userStats.longest_streak || 0)}
+                    </div>
+                </div>
+            `;
+        }
+
+            async function loadHistory() {
             const workouts = await apiGet('/api/workouts');
             const list = document.getElementById('historyList');
             if (!workouts.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><p>No workouts yet.</p></div>'; return; }
@@ -1895,12 +1989,13 @@
             document.getElementById(tabName).classList.add('active');
             if (tabName === 'perks') loadPerks();
             if (tabName === 'achievements') loadAchievements();
+            if (tabName === 'stats') loadStatsDashboard();
             if (tabName === 'history') loadHistory();
         }
 
         // Keyboard shortcuts: 1-6 for tabs, [ / ] to cycle, Esc to close modals
         (function() {
-            const TABS = ['howto', 'perks', 'achievements', 'history'];
+            const TABS = ['howto', 'perks', 'achievements', 'stats', 'history'];
             document.addEventListener('keydown', (e) => {
                 // Don't hijack typing in inputs
                 const tag = (e.target && e.target.tagName) || '';

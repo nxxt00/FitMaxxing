@@ -60,7 +60,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS workout_rp_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workout_id INTEGER NOT NULL,
-    rp_amount INTEGER NOT NULL,
+    xp_amount INTEGER DEFAULT 0,
+    rp_amount INTEGER DEFAULT 0,
     reason TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
@@ -198,6 +199,18 @@ const achievementsColumnNames = new Set(achievementsColumns.map(c => c.name));
 if (!achievementsColumnNames.has('source_workout_id')) {
   console.log('Migrating achievements: adding source_workout_id column');
   db.exec("ALTER TABLE achievements ADD COLUMN source_workout_id INTEGER");
+}
+
+// Migrate ledger to add xp_amount column (older DBs lack it)
+const ledgerColumns = db.prepare("PRAGMA table_info(workout_rp_ledger)").all();
+const ledgerColumnNames = new Set(ledgerColumns.map(c => c.name));
+if (!ledgerColumnNames.has('xp_amount')) {
+  console.log('Migrating workout_rp_ledger: adding xp_amount column');
+  db.exec("ALTER TABLE workout_rp_ledger ADD COLUMN xp_amount INTEGER DEFAULT 0");
+}
+if (!ledgerColumnNames.has('rp_amount')) {
+  console.log('Migrating workout_rp_ledger: adding rp_amount column');
+  db.exec("ALTER TABLE workout_rp_ledger ADD COLUMN rp_amount INTEGER DEFAULT 0");
 }
 
 db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, selected_legend, season_xp, current_rank, packs_opened, streak_freeze_available) VALUES (1, 0, 1, 0, 0, ?, 0, ?, 0, 0)').run('wraith', 'Bronze IV');
@@ -932,30 +945,35 @@ function recomputeStreaks() {
 }
 
 // Revoke achievements no longer satisfied by current stats
-function recheckAchievements() {
-  const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const earned = db.prepare('SELECT achievement_key, source_workout_id FROM achievements').all();
-  if (earned.length === 0) return { revoked: [], refundsNeeded: 0 };
+// Returns true if the given achievement's condition is currently satisfied.
+// Independent of the achievements table (so it can revoke trophies).
+function isAchievementMet(key) {
+  const stats = db.prepare('SELECT total_xp, current_streak, level, current_rank FROM user_stats WHERE id = 1').get();
+  const totalPushups = (db.prepare("SELECT COALESCE(SUM(reps), 0) as t FROM workouts WHERE exercise_type = 'pushups'").get() || {}).t || 0;
+  switch (key) {
+    case 'first_workout':     return stats.total_xp > 0;
+    case 'hundred_pushups':   return totalPushups >= 100;
+    case 'week_streak':       return stats.current_streak >= 7;
+    case 'level_5':           return stats.level >= 5;
+    case 'level_10':          return stats.level >= 10;
+    case 'reach_gold':        return (stats.current_rank || '').includes('Gold');
+    case 'reach_diamond':     return (stats.current_rank || '').includes('Diamond');
+    case 'apex_predator':     return stats.current_rank === 'Apex Predator';
+    default:                  return true; // unknown → keep
+  }
+}
 
-  const stillEarned = checkAchievements({}, stats);
-  const stillKeys = new Set(stillEarned.map(a => a.key));
+function recheckAchievements() {
+  const earned = db.prepare('SELECT achievement_key FROM achievements').all();
+  if (earned.length === 0) return { revoked: [], refundsNeeded: 0 };
+  const ACHIEVEMENT_RP_BONUS = 50;
   const revoked = [];
   let refundsNeeded = 0;
-  const ACHIEVEMENT_RP_BONUS = 50;
-
   for (const row of earned) {
-    if (!stillKeys.has(row.achievement_key)) {
-      // If the source workout is still alive, the +50 RP is still in its
-      // ledger (we'll need to refund manually). If the source workout was
-      // already deleted, the ledger row was already removed and refunded
-      // via totalRpRefund, so don't double-count.
-      const sourceAlive = row.source_workout_id
-        && db.prepare('SELECT id FROM workouts WHERE id = ?').get(row.source_workout_id);
-      if (sourceAlive) {
-        refundsNeeded += ACHIEVEMENT_RP_BONUS;
-      }
+    if (!isAchievementMet(row.achievement_key)) {
       db.prepare('DELETE FROM achievements WHERE achievement_key = ?').run(row.achievement_key);
       revoked.push(row.achievement_key);
+      refundsNeeded += ACHIEVEMENT_RP_BONUS;
     }
   }
   return { revoked, refundsNeeded };
@@ -1060,15 +1078,15 @@ app.post('/api/workouts', (req, res) => {
   const workoutId = result.lastInsertRowid;
 
   // Helper: record a bonus RP entry in the ledger for this workout
-  const recordBonus = (amount, reason) => {
-    if (amount > 0) {
-      db.prepare('INSERT INTO workout_rp_ledger (workout_id, rp_amount, reason) VALUES (?, ?, ?)').run(workoutId, amount, reason);
+  const recordBonus = (xpAmt, rpAmt, reason) => {
+    if (xpAmt > 0 || rpAmt > 0) {
+      db.prepare('INSERT INTO workout_rp_ledger (workout_id, xp_amount, rp_amount, reason) VALUES (?, ?, ?, ?)').run(workoutId, xpAmt || 0, rpAmt || 0, reason);
     }
   };
 
   let totalXpGained = xpEarned;
   let totalRpGained = rpEarned;
-  recordBonus(rpEarned, 'base');
+  recordBonus(xpEarned, rpEarned, 'base');
 
   const newTotalXP = stats.total_xp + totalXpGained;
   const newLevel = calculateLevel(newTotalXP);
@@ -1099,15 +1117,15 @@ app.post('/api/workouts', (req, res) => {
 
   if (newStreak === 7 && oldLongestStreak < 7) {
     totalRpGained += 50;
-    recordBonus(50, 'streak');
+    recordBonus(0, 50, 'streak');
     streakBonus = { text: '7-day streak!', rp: 50 };
   } else if (newStreak === 14 && oldLongestStreak < 14) {
     totalRpGained += 100;
-    recordBonus(100, 'streak');
+    recordBonus(0, 100, 'streak');
     streakBonus = { text: '14-day streak!', rp: 100 };
   } else if (newStreak === 30 && oldLongestStreak < 30) {
     totalRpGained += 200;
-    recordBonus(200, 'streak');
+    recordBonus(0, 200, 'streak');
     streakBonus = { text: '30-day streak!', rp: 200 };
   }
 
@@ -1124,7 +1142,7 @@ app.post('/api/workouts', (req, res) => {
     db.prepare('INSERT INTO achievements (achievement_key, achievement_name, source_workout_id) VALUES (?, ?, ?)').run(ach.key, ach.name, workoutId);
     achievementRpBonus += 50;
   });
-  recordBonus(achievementRpBonus, 'achievement');
+  recordBonus(0, achievementRpBonus, 'achievement');
 
   if (achievementRpBonus > 0) {
     totalRpGained += achievementRpBonus;
@@ -1134,12 +1152,14 @@ app.post('/api/workouts', (req, res) => {
   const completedChallenges = updateDailyChallengeProgress(exerciseType, reps);
 
   let dailyCompletionRP = 0;
+  let dailyCompletionXP = 0;
   completedChallenges.forEach(ch => {
     totalXpGained += ch.xpReward;
+    dailyCompletionXP += ch.xpReward;
     dailyCompletionRP += 50;
     totalRpGained += 50; // Bonus RP for completing challenges
   });
-  recordBonus(dailyCompletionRP, 'daily_complete');
+  recordBonus(dailyCompletionXP, dailyCompletionRP, 'daily_complete');
 
   if (completedChallenges.length > 0) {
     const finalTotalXP = newTotalXP + completedChallenges.reduce((sum, c) => sum + c.xpReward, 0);
@@ -1148,9 +1168,9 @@ app.post('/api/workouts', (req, res) => {
 
   const weeklyResult = updateWeeklyGoalProgress(exerciseType, reps);
   if (weeklyResult && weeklyResult.completed) {
-    // Weekly reward is XP only (RP is reserved for rank). The +50 RP
-    // dailies/achievements bonuses below still go to season_xp.
+    // Weekly reward is XP only (RP is reserved for rank).
     totalXpGained += weeklyResult.xp_reward;
+    recordBonus(weeklyResult.xp_reward, 0, 'weekly_goal');
     db.prepare('UPDATE user_stats SET total_xp = total_xp + ? WHERE id = 1').run(weeklyResult.xp_reward);
   }
 
@@ -1158,7 +1178,7 @@ app.post('/api/workouts', (req, res) => {
   if (newLevel > stats.level) {
     packDropped = openApexPack();
     totalRpGained += 25; // RP for leveling up
-    recordBonus(25, 'level_up');
+    recordBonus(0, 25, 'level_up');
     db.prepare('UPDATE user_stats SET season_xp = season_xp + 25 WHERE id = 1').run();
   }
   // Touch the season system so it auto-rolls on expiry
@@ -1196,12 +1216,13 @@ app.delete('/api/workouts/:id', (req, res) => {
     return res.status(404).json({ error: 'Workout not found' });
   }
 
-  // 1) Refund ONLY the base RP for this workout (reason='base').
-  // Bonuses (streak, achievement, level-up, daily_complete, weekly_goal) are
-  // one-time rewards earned at the time; deleting a workout later shouldn't
-  // claw them back. Only the base RP (40% of workout XP) is refunded.
-  const baseRpRefundRow = db.prepare('SELECT SUM(rp_amount) as total FROM workout_rp_ledger WHERE workout_id = ? AND reason = ?').get(id, 'base');
-  const baseRpRefund = baseRpRefundRow?.total || 0;
+  // 1) Compute this workout's full XP/RP contribution from its ledger rows
+  const ledgerRows = db.prepare('SELECT xp_amount, rp_amount, reason FROM workout_rp_ledger WHERE workout_id = ?').all(id);
+  const workoutXp = ledgerRows.reduce((s, r) => s + (r.xp_amount || 0), 0);
+  const workoutRp = ledgerRows.reduce((s, r) => s + (r.rp_amount || 0), 0);
+  // Fallback if no ledger rows exist (legacy workouts): refund base XP + 40% RP
+  const effXpToRefund = workoutXp > 0 ? workoutXp : workout.xp_earned;
+  const effRpToRefund = workoutRp > 0 ? workoutRp : Math.round(workout.xp_earned * 0.4);
 
   // 2) Roll back daily challenge + weekly goal progress
   rollbackDailyChallengeProgress(workout.exercise_type, workout.reps);
@@ -1210,11 +1231,11 @@ app.delete('/api/workouts/:id', (req, res) => {
   // 3) Delete the workout (cascades to ledger via FK)
   db.prepare('DELETE FROM workouts WHERE id = ?').run(id);
 
-  // 4) Refund XP and base RP from user_stats
+  // 4) Refund the workout's XP and RP from user_stats
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const newTotalXP = Math.max(0, stats.total_xp - workout.xp_earned);
+  const newTotalXP = Math.max(0, stats.total_xp - effXpToRefund);
   const newLevel = calculateLevel(newTotalXP);
-  const newSeasonXP = Math.max(0, stats.season_xp - baseRpRefund);
+  const newSeasonXP = Math.max(0, stats.season_xp - effRpToRefund);
   const newRank = getRank(newSeasonXP);
 
   db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`)
@@ -1223,20 +1244,18 @@ app.delete('/api/workouts/:id', (req, res) => {
   // 5) Recompute streak from remaining workouts
   recomputeStreaks();
 
-  // 6) Revoke any achievement no longer met. The +50 RP per achievement was
-  //    already recorded in the source workout's ledger (reason='achievement'),
-  //    so when that source workout is deleted the RP refund flows through
-  //    `totalRpRefund` above. If the source workout is STILL alive (i.e.
-  //    this workout's deletion flipped a different achievement invalid), we
-  //    need to claw back the +50 separately.
+  // 6) Revoke any trophy no longer met. Correct revocation: check each
+  //    earned achievement's condition against CURRENT data, and if the
+  //    condition no longer holds, remove it and claw back its +50 RP.
   const { revoked, refundsNeeded } = recheckAchievements();
   if (refundsNeeded > 0) {
     db.prepare('UPDATE user_stats SET season_xp = MAX(0, season_xp - ?) WHERE id = 1').run(refundsNeeded);
+    db.prepare('UPDATE user_stats SET current_rank = ? WHERE id = 1').run(getRank(db.prepare('SELECT season_xp FROM user_stats WHERE id=1').get().season_xp));
   }
 
   res.json({
     success: true,
-    refunded: { xp: workout.xp_earned, rp: baseRpRefund },
+    refunded: { xp: effXpToRefund, rp: effRpToRefund },
     revokedAchievements: revoked
   });
 });

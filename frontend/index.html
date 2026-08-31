@@ -1604,7 +1604,7 @@
                 }), 4800 + (i * 1200)));
                 if (data.weeklyGoalCompleted && data.weeklyGoalCompleted.completed) setTimeout(() => showNotification({
                     title: `WEEKLY GOAL CLEARED!`,
-                    sub: `+${data.weeklyGoalCompleted.rp_bonus} RP bonus`,
+                    sub: `+${data.weeklyGoalCompleted.xp_reward} XP`,
                     type: 'rank-up',
                     icon: '🎯',
                     duration: 6000
@@ -1654,7 +1654,7 @@
             container.innerHTML = `
                 <div class="weekly-goal-card ${goal.completed ? 'completed' : ''}">
                     <div class="weekly-text">${goal.completed ? '✓ ' : ''}${text}</div>
-                    <div class="weekly-reward">+${goal.rp_bonus} RP</div>
+                    <div class="weekly-reward">+${goal.xp_reward} XP</div>
                     <div class="progress-bar"><div class="progress-fill legend" style="width: ${percent}%"></div></div>
                     <div style="text-align: right; margin-top: 4px; font-size: 0.7em; color: var(--text-muted);">${goal.progress}/${goal.target_value}</div>
                 </div>

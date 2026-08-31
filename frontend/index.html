@@ -660,6 +660,26 @@
 
         .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
+        /* Lazy-loaded YouTube placeholder — thumbnail + play button overlay */
+        .video-placeholder {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            border: 0; padding: 0; cursor: pointer; background: #000; overflow: hidden;
+        }
+        .video-placeholder img { width: 100%; height: 100%; object-fit: cover; opacity: 0.85; transition: opacity 0.2s, transform 0.3s; }
+        .video-placeholder:hover img { opacity: 1; transform: scale(1.02); }
+        .video-play-icon {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 64px; height: 44px; background: rgba(0, 0, 0, 0.7); border-radius: 12px;
+            color: white; font-size: 1.2em; display: flex; align-items: center; justify-content: center;
+            padding-left: 4px; transition: background 0.2s;
+        }
+        .video-placeholder:hover .video-play-icon { background: rgba(255, 0, 0, 0.85); }
+        .video-duration {
+            position: absolute; bottom: 8px; right: 8px;
+            background: rgba(0, 0, 0, 0.75); color: white;
+            padding: 2px 8px; border-radius: 4px; font-size: 0.7em; font-weight: 600;
+        }
+
         .tutorial-steps {
             background: var(--bg-secondary);
             border-radius: 5px;
@@ -767,6 +787,33 @@
         .achievement-desc { font-size: 0.65em; color: var(--text-muted); margin-top: 2px; }
 
         .workout-history { max-height: 500px; overflow-y: auto; }
+
+        .history-summary {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .hs-block {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            text-align: center;
+        }
+        .hs-label { font-size: 0.62em; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+        .hs-value { font-size: 0.78em; color: var(--text-primary); font-weight: 700; margin-top: 3px; }
+
+        .history-day-group { margin-bottom: 14px; }
+        .history-day-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 10px; margin-bottom: 6px;
+            background: var(--bg-secondary);
+            border-left: 3px solid var(--accent-primary);
+            border-radius: 4px;
+        }
+        .history-day-title { font-size: 0.78em; font-weight: 700; color: var(--text-primary); }
+        .history-day-totals { font-size: 0.7em; color: var(--text-secondary); font-weight: 600; }
 
         .history-item {
             background: var(--bg-tertiary);
@@ -1627,23 +1674,92 @@
             const workouts = await apiGet('/api/workouts');
             const list = document.getElementById('historyList');
             if (!workouts.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><p>No workouts yet.</p></div>'; return; }
-            list.innerHTML = workouts.map(w => {
-                const src = w.source === 'apex_situation' ? '🎮' : w.source === 'quick_log' ? '⚡' : '✏️';
-                const rpEarned = Math.round(w.xp_earned * 0.4);
+
+            // Group by local YYYY-MM-DD, then sort groups newest first
+            const byDay = new Map();
+            for (const w of workouts) {
+                const d = new Date(w.created_at);
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                if (!byDay.has(key)) byDay.set(key, []);
+                byDay.get(key).push(w);
+            }
+            const sortedKeys = [...byDay.keys()].sort((a, b) => b.localeCompare(a));
+
+            // Build a "this week" / "earlier" split for the summary header
+            const now = new Date();
+            const weekStart = new Date(now);
+            weekStart.setHours(0, 0, 0, 0);
+            weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+            let weekXP = 0, weekRP = 0, monthXP = 0, monthRP = 0, totalRP = 0;
+            for (const w of workouts) {
+                const rp = Math.round(w.xp_earned * 0.4);
+                const d = new Date(w.created_at);
+                totalRP += rp;
+                if (d >= weekStart) { weekXP += w.xp_earned; weekRP += rp; }
+                if (d >= monthStart) { monthXP += w.xp_earned; monthRP += rp; }
+            }
+
+            const fmtDayHeader = (key) => {
+                const d = new Date(key + 'T00:00:00');
+                const today = new Date(); today.setHours(0, 0, 0, 0);
+                const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+                if (d.getTime() === today.getTime()) return '📅 Today';
+                if (d.getTime() === yesterday.getTime()) return '📅 Yesterday';
+                return `📅 ${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}`;
+            };
+
+            const summaryHtml = `
+                <div class="history-summary">
+                    <div class="hs-block">
+                        <div class="hs-label">This Week</div>
+                        <div class="hs-value">+${weekXP} XP · +${weekRP} RP</div>
+                    </div>
+                    <div class="hs-block">
+                        <div class="hs-label">This Month</div>
+                        <div class="hs-value">+${monthXP} XP · +${monthRP} RP</div>
+                    </div>
+                    <div class="hs-block">
+                        <div class="hs-label">All Time</div>
+                        <div class="hs-value">+${totalRP} RP</div>
+                    </div>
+                </div>
+            `;
+
+            const groupsHtml = sortedKeys.map(key => {
+                const dayWorkouts = byDay.get(key);
+                const dayXP = dayWorkouts.reduce((s, w) => s + w.xp_earned, 0);
+                const dayRP = dayWorkouts.reduce((s, w) => s + Math.round(w.xp_earned * 0.4), 0);
+                const itemsHtml = dayWorkouts.map(w => {
+                    const src = w.source === 'apex_situation' ? '🎮' : w.source === 'quick_log' ? '⚡' : '✏️';
+                    const rpEarned = Math.round(w.xp_earned * 0.4);
+                    return `
+                        <div class="history-item">
+                            <div class="history-info">
+                                <div class="history-exercise">${w.exercise_type.replace(/_/g, ' ')} - ${w.reps} ${w.unit} <span class="history-source">${src}</span></div>
+                                <div class="history-meta">${new Date(w.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div>
+                            </div>
+                            <div class="history-rewards">
+                                <div class="history-xp">+${w.xp_earned} XP</div>
+                                <div class="history-rp">+${rpEarned} RP</div>
+                            </div>
+                            <button class="delete-btn" onclick="deleteWorkout(${w.id})">🗑️</button>
+                        </div>
+                    `;
+                }).join('');
                 return `
-                    <div class="history-item">
-                        <div class="history-info">
-                            <div class="history-exercise">${w.exercise_type.replace(/_/g, ' ')} - ${w.reps} ${w.unit} <span class="history-source">${src}</span></div>
-                            <div class="history-meta">${new Date(w.created_at).toLocaleString()}</div>
+                    <div class="history-day-group">
+                        <div class="history-day-header">
+                            <span class="history-day-title">${fmtDayHeader(key)}</span>
+                            <span class="history-day-totals">+${dayXP} XP · +${dayRP} RP</span>
                         </div>
-                        <div class="history-rewards">
-                            <div class="history-xp">+${w.xp_earned} XP</div>
-                            <div class="history-rp">+${rpEarned} RP</div>
-                        </div>
-                        <button class="delete-btn" onclick="deleteWorkout(${w.id})">🗑️</button>
+                        ${itemsHtml}
                     </div>
                 `;
             }).join('');
+
+            list.innerHTML = summaryHtml + groupsHtml;
         }
 
         async function deleteWorkout(id) {
@@ -1667,7 +1783,12 @@
         }
 
         function renderHowTo() {
-            document.getElementById('howtoList').innerHTML = Object.values(allExercises).map(ex => `
+            document.getElementById('howtoList').innerHTML = Object.values(allExercises).map(ex => {
+                // Lazy-load YouTube: render a thumbnail button that swaps in the iframe on first click
+                // (saves bandwidth + the iframes can be heavy on the dashboard)
+                const ytId = ex.youtubeId;
+                const thumbUrl = `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`;
+                return `
                 <div class="exercise-card" id="howto-${ex.type}" style="margin-bottom: 14px;">
                     <div class="exercise-header">
                         <div class="exercise-name">${ex.name} (${ex.unit})</div>
@@ -1678,8 +1799,12 @@
                         <span id="tutIcon-${ex.type}">▶</span> Watch & Steps
                     </button>
                     <div class="tutorial-content" id="tutorial-${ex.type}">
-                        <div class="video-container">
-                            <iframe src="https://www.youtube.com/embed/${ex.youtubeId}" frameborder="0" allowfullscreen></iframe>
+                        <div class="video-container" id="video-${ex.type}">
+                            <button class="video-placeholder" onclick="loadYouTubeVideo('${ex.type}', '${ytId}')" aria-label="Load video">
+                                <img src="${thumbUrl}" alt="${ex.name} video thumbnail" loading="lazy" />
+                                <span class="video-play-icon">▶</span>
+                                <span class="video-duration">Click to load</span>
+                            </button>
                         </div>
                         <div class="tutorial-steps">
                             <h4>Form Steps</h4>
@@ -1687,7 +1812,16 @@
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+        }
+
+        function loadYouTubeVideo(exType, ytId) {
+            const container = document.getElementById(`video-${exType}`);
+            if (!container || container.dataset.loaded) return;
+            container.dataset.loaded = '1';
+            // Replace the placeholder with a real iframe
+            container.innerHTML = `<iframe src="https://www.youtube.com/embed/${ytId}?autoplay=1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
         }
 
         function toggleTutorial(type) {

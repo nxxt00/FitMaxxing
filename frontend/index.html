@@ -1547,6 +1547,15 @@
                     }), 800);
                 }
                 if (data.season) lastKnownSeasonId = data.season.id;
+                if (data.freezeConsumed) {
+                    setTimeout(() => showNotification({
+                        title: '🧊 Streak Freeze used',
+                        sub: 'Your streak was protected this time',
+                        type: 'success',
+                        icon: '🧊',
+                        duration: 6000
+                    }), 800);
+                }
                 loadStats();
                 loadDailyChallenges();
                 loadWeeklyGoal();
@@ -1668,7 +1677,7 @@
             const list = document.getElementById('perksList');
             if (!perks.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚡</div><p>No perks yet. Earn from Apex Packs!</p></div>'; return; }
             
-            const perkIcons = { xp_boost: '⚡', rest_day: '😴', custom_preset: '🎯', rank_protection: '🛡️' };
+            const perkIcons = { xp_boost: '⚡', rp_boost: '🏆', streak_freeze: '🧊', pack_drop: '🎁' };
             list.innerHTML = perks.map(p => `
                 <div class="perk-card ${p.perk_type} ${p.used ? 'used' : ''} ${activeIds.has(p.id) ? 'active-perk' : ''}" onclick="${!p.used ? `activatePerk(${p.id})` : ''}">
                     <div class="perk-icon">${perkIcons[p.perk_type] || '🎁'}</div>

@@ -669,9 +669,9 @@ const PROGRAM_TEMPLATES = {
 
 const PERK_TYPES = {
   xp_boost: { name: '2x XP Boost (24h)', icon: '⚡' },
-  rest_day: { name: 'Rest Day Token', icon: '😴' },
-  custom_preset: { name: 'Custom Quick-Log Preset Unlock', icon: '🎯' },
-  rank_protection: { name: 'Rank Protection (lose no RP for 1 day)', icon: '🛡️' }
+  rp_boost: { name: '2x RP Boost (24h)', icon: '🏆' },
+  streak_freeze: { name: 'Streak Freeze (save 1 missed day)', icon: '🧊' },
+  pack_drop: { name: 'Instant Apex Pack', icon: '🎁' }
 };
 
 // Apex Pack rewards - now programs and perks
@@ -699,7 +699,7 @@ function openApexPack() {
       items.push({ type: 'program', key: legendaryProgram, rarity: 'legendary' });
     } else {
       items.push({ type: 'perk', key: 'xp_boost', rarity: 'epic' });
-      items.push({ type: 'perk', key: 'rest_day', rarity: 'epic' });
+      items.push({ type: 'perk', key: 'pack_drop', rarity: 'epic' });
     }
   } else if (rarity === 'epic') {
     // Program (if new) or 2 perks
@@ -1069,6 +1069,11 @@ app.post('/api/workouts', (req, res) => {
     xpCalc.bonusApplied = true;
     xpCalc.multiplier *= 2;
   }
+  // Check for active RP boost perk (rank grind only)
+  const activeRpBoost = db.prepare('SELECT * FROM perks WHERE perk_type = ? AND used = 1 AND expires_at > ?').get('rp_boost', now);
+  if (activeRpBoost) {
+    xpCalc.rp *= 2;
+  }
   
   const xpEarned = xpCalc.xp;
   const rpEarned = xpCalc.rp;
@@ -1094,6 +1099,7 @@ app.post('/api/workouts', (req, res) => {
   const newRank = getRank(newSeasonXP);
 
   let newStreak = stats.current_streak;
+  let freezeConsumed = false;
   if (!stats.last_workout_date) {
     newStreak = 1;
   } else {
@@ -1106,7 +1112,14 @@ app.post('/api/workouts', (req, res) => {
     } else if (daysDiff === 1) {
       newStreak = stats.current_streak + 1;
     } else {
-      newStreak = 1;
+      // Streak would break — use a freeze credit if available
+      if (stats.streak_freeze_available > 0) {
+        db.prepare('UPDATE user_stats SET streak_freeze_available = streak_freeze_available - 1 WHERE id = 1').run();
+        freezeConsumed = true;
+        newStreak = stats.current_streak + 1; // keep it alive
+      } else {
+        newStreak = 1;
+      }
     }
   }
 
@@ -1204,6 +1217,7 @@ app.post('/api/workouts', (req, res) => {
     completedChallenges,
     weeklyGoalCompleted: weeklyResult,
     streakBonus,
+    freezeConsumed,
     season: activeSeason
   });
 });
@@ -1569,16 +1583,28 @@ app.post('/api/perk/:id/activate', (req, res) => {
   const perk = db.prepare('SELECT * FROM perks WHERE id = ?').get(id);
   if (!perk) return res.status(404).json({ error: 'Perk not found' });
   if (perk.used) return res.status(400).json({ error: 'Perk already used' });
-  
+
   const now = new Date();
   let expiresAt = null;
-  
+  let extra = {};
+
   if (perk.perk_type === 'xp_boost') {
     expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  } else if (perk.perk_type === 'rp_boost') {
+    expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  } else if (perk.perk_type === 'streak_freeze') {
+    // Consume immediately: grant a streak-freeze credit
+    db.prepare('UPDATE user_stats SET streak_freeze_available = streak_freeze_available + 1 WHERE id = 1').run();
+    db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, used = 1 WHERE id = ?').run(id);
+    return res.json({ success: true, perk, effect: 'Streak freeze granted (1 missed day protected)' });
+  } else if (perk.perk_type === 'pack_drop') {
+    extra.pack = openApexPack();
+    db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, used = 1 WHERE id = ?').run(id);
+    return res.json({ success: true, perk, effect: 'Pack opened!', pack: extra.pack });
   }
-  
+
   db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, expires_at = ?, used = 1 WHERE id = ?').run(expiresAt, id);
-  res.json({ success: true, perk });
+  res.json({ success: true, perk, expiresAt });
 });
 
 app.get('/api/active-perks', (req, res) => {

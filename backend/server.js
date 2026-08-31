@@ -888,6 +888,8 @@ app.post('/api/workouts', (req, res) => {
     multiplier: xpCalc.multiplier,
     totalXP: newTotalXP + completedChallenges.reduce((sum, c) => sum + c.xpReward, 0),
     level: newLevel,
+    newLevel,
+    leveledUp: newLevel > stats.level,
     currentStreak: newStreak,
     achievementsUnlocked: achievements,
     packDropped,

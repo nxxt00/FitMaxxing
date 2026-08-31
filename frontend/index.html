@@ -141,6 +141,72 @@
         .rank-name { font-weight: 700; color: var(--accent-secondary); font-size: 0.85em; }
         .rank-rp { font-size: 0.65em; color: var(--text-muted); }
 
+        /* Rank tier color system — applied via JS class on .rank-badge */
+        .rank-badge { transition: border-color 0.4s, box-shadow 0.4s; position: relative; overflow: hidden; }
+        .rank-badge.rank-bronze    { border-color: #b45309; box-shadow: 0 0 0 1px rgba(180, 83, 9, 0.25); }
+        .rank-badge.rank-silver    { border-color: #94a3b8; box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.3); }
+        .rank-badge.rank-gold      { border-color: #f59e0b; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35); }
+        .rank-badge.rank-platinum  { border-color: #06b6d4; box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.4); }
+        .rank-badge.rank-diamond   { border-color: #a855f7; box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.45); }
+        .rank-badge.rank-master    { border-color: #ef4444; box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.5); }
+        .rank-badge.rank-predator  { border-color: #f43f5e; box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.55); animation: predatorPulse 2.4s ease-in-out infinite; }
+
+        @keyframes predatorPulse {
+            0%, 100% { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.55), 0 0 0 rgba(244, 63, 94, 0); }
+            50%      { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.85), 0 0 18px rgba(244, 63, 94, 0.35); }
+        }
+
+        /* Rank-up flash overlay */
+        .rank-badge.rank-flash::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.45), transparent 70%);
+            animation: rankFlash 0.9s ease-out forwards;
+            pointer-events: none;
+            border-radius: inherit;
+        }
+        @keyframes rankFlash {
+            0%   { opacity: 0; transform: scale(0.6); }
+            40%  { opacity: 1; transform: scale(1.1); }
+            100% { opacity: 0; transform: scale(1.4); }
+        }
+
+        /* XP pulse on gain */
+        .progress-fill.xp-pulse { animation: xpPulse 0.8s ease-out; }
+        @keyframes xpPulse {
+            0%   { filter: brightness(1); }
+            30%  { filter: brightness(1.6) saturate(1.4); }
+            100% { filter: brightness(1); }
+        }
+
+        /* Level-up modal */
+        .levelup-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); display: none; align-items: center; justify-content: center; z-index: 1100; backdrop-filter: blur(6px); }
+        .levelup-overlay.show { display: flex; animation: fadeIn 0.25s; }
+        .levelup-modal {
+            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
+            border: 2px solid var(--rarity-legendary);
+            border-radius: 16px;
+            padding: 28px 32px;
+            text-align: center;
+            max-width: 360px;
+            width: calc(100% - 32px);
+            box-shadow: 0 0 60px rgba(245, 158, 11, 0.5);
+            animation: levelupPop 0.5s cubic-bezier(.2, 1.4, .4, 1);
+        }
+        @keyframes levelupPop {
+            0%   { transform: scale(0.4); opacity: 0; }
+            60%  { transform: scale(1.08); opacity: 1; }
+            100% { transform: scale(1); }
+        }
+        .levelup-icon { font-size: 3.5em; line-height: 1; margin-bottom: 6px; filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6)); }
+        .levelup-title { font-size: 1.6em; font-weight: 800; color: var(--rarity-legendary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+        .levelup-sub { color: var(--text-secondary); font-size: 0.95em; margin-bottom: 18px; }
+        .levelup-pack { background: var(--bg-tertiary); border: 1px solid var(--rarity-legendary); border-radius: 10px; padding: 12px; margin-bottom: 18px; font-size: 0.85em; }
+        .levelup-btn { background: var(--rarity-legendary); color: #1a1a1a; border: none; padding: 10px 24px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 0.95em; }
+        .levelup-btn:hover { filter: brightness(1.1); }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
         .rank-difficulty {
             display: inline-block;
             background: var(--bg-tertiary);
@@ -1069,6 +1135,61 @@
             document.getElementById('themeText').textContent = theme === 'dark' ? 'Light' : 'Dark';
         }
 
+        function getRankTier(rankName) {
+            if (rankName.includes('Bronze')) return 'bronze';
+            if (rankName.includes('Silver')) return 'silver';
+            if (rankName.includes('Gold')) return 'gold';
+            if (rankName.includes('Platinum')) return 'platinum';
+            if (rankName.includes('Diamond')) return 'diamond';
+            if (rankName === 'Master') return 'master';
+            if (rankName === 'Apex Predator') return 'predator';
+            return 'bronze';
+        }
+
+        function showLevelUpModal(newLevel, pack) {
+            // Build a fresh overlay each time so the animation re-fires
+            const existing = document.getElementById('levelupOverlay');
+            if (existing) existing.remove();
+            const packHtml = pack
+                ? `<div class="levelup-pack">🎁 <strong>${pack.rarity.toUpperCase()} PACK</strong> — ${(pack.items || []).map(i => `${i.rarity} ${i.name}`).join(', ')}</div>`
+                : '';
+            const overlay = document.createElement('div');
+            overlay.id = 'levelupOverlay';
+            overlay.className = 'levelup-overlay';
+            overlay.innerHTML = `
+                <div class="levelup-modal">
+                    <div class="levelup-icon">🎉</div>
+                    <div class="levelup-title">Level ${newLevel}!</div>
+                    <div class="levelup-sub">You ranked up. New challenges ahead.</div>
+                    ${packHtml}
+                    <button class="levelup-btn" onclick="document.getElementById('levelupOverlay').remove()">LET'S GO</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('show'));
+            // Click backdrop to dismiss
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        }
+
+        function pulseXpFill() {
+            const fill = document.getElementById('progressFill');
+            if (!fill) return;
+            fill.classList.remove('xp-pulse');
+            // Force reflow so re-adding the class restarts the animation
+            void fill.offsetWidth;
+            fill.classList.add('xp-pulse');
+            setTimeout(() => fill.classList.remove('xp-pulse'), 900);
+        }
+
+        function flashRankBadge() {
+            const badge = document.querySelector('.rank-badge');
+            if (!badge) return;
+            badge.classList.remove('rank-flash');
+            void badge.offsetWidth;
+            badge.classList.add('rank-flash');
+            setTimeout(() => badge.classList.remove('rank-flash'), 1000);
+        }
+
         function getRankIcon(rankName) {
             if (rankName.includes('Bronze')) return '🥉';
             if (rankName.includes('Silver')) return '🥈';
@@ -1102,7 +1223,13 @@
             document.getElementById('rankRP').textContent = `${userStats.season_xp} RP`;
             document.getElementById('rankProgressText').textContent = `${userStats.rankProgress.current}/${userStats.rankProgress.needed} RP`;
             document.getElementById('rankProgressFill').style.width = `${userStats.rankProgress.percent}%`;
-            document.getElementById('rankDifficulty').textContent = `${userStats.rankProgress.percent ? '' : ''}${getRankDifficultyLabel(userStats.current_rank)} difficulty`;
+            document.getElementById('rankDifficulty').textContent = `${getRankDifficultyLabel(userStats.current_rank)} difficulty`;
+            // Tier-colored rank badge — only set if it actually changed to avoid gratuitous transitions
+            const badge = document.querySelector('.rank-badge');
+            const tier = getRankTier(userStats.current_rank);
+            const tierClasses = ['rank-bronze','rank-silver','rank-gold','rank-platinum','rank-diamond','rank-master','rank-predator'];
+            tierClasses.forEach(c => badge.classList.remove(c));
+            badge.classList.add(`rank-${tier}`);
         }
 
         function getRankDifficultyLabel(rankName) {
@@ -1259,17 +1386,23 @@
                     icon: '⚡',
                     duration: 3500
                 });
+                // Pulse the XP bar so the gain feels physical
+                pulseXpFill();
                 loadStats();
                 loadDailyChallenges();
                 loadWeeklyGoal();
 
-                if (data.rankChanged) setTimeout(() => showNotification({
-                    title: `RANK UP! ${data.newRank}`,
-                    sub: 'Harder challenges unlocked',
-                    type: 'rank-up',
-                    icon: '🎖️',
-                    duration: 6000
-                }), 1200);
+                if (data.rankChanged) {
+                    // Flash the badge + show a one-shot notification
+                    flashRankBadge();
+                    setTimeout(() => showNotification({
+                        title: `RANK UP! ${data.newRank}`,
+                        sub: 'Harder challenges unlocked',
+                        type: 'rank-up',
+                        icon: '🎖️',
+                        duration: 6000
+                    }), 1200);
+                }
                 if (data.packDropped && data.packDropped.items) {
                     setTimeout(() => {
                         const itemNames = data.packDropped.items.map(i => `${i.rarity} ${i.name}`).join(', ');
@@ -1281,6 +1414,10 @@
                             duration: 6000
                         });
                     }, 2400);
+                }
+                // Big level-up modal — last so it sits on top of the pack/rank toasts
+                if (data.leveledUp && data.newLevel) {
+                    setTimeout(() => showLevelUpModal(data.newLevel, data.packDropped), 4200);
                 }
                 if (data.achievementsUnlocked.length > 0) setTimeout(() => {
                     const ach = data.achievementsUnlocked[0];

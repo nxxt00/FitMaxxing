@@ -700,8 +700,100 @@ function checkAchievements(workout, stats) {
   if (stats.current_rank === 'Apex Predator' && !db.prepare('SELECT id FROM achievements WHERE achievement_key = ?').get('apex_predator')) {
     achievements.push({ key: 'apex_predator', name: 'Apex Predator' });
   }
-  
+
   return achievements;
+}
+
+// === Shared helpers for full-refund workout deletion ===
+// Compute the same increment a workout would have added to a daily challenge
+function dailyChallengeIncrement(template, exerciseType, reps) {
+  if (!template) return 0;
+  if (template.type === exerciseType) return reps;
+  if (template.type === 'total') return reps;
+  if (template.type === 'any') return 1;
+  if (template.type === 'chest_stretch' && (exerciseType === 'chest_stretch' || exerciseType === 'neck_stretch' || exerciseType === 'cat_cow')) {
+    return reps;
+  }
+  return 0;
+}
+
+// Roll back daily challenge progress for a single workout (today only — we can't undo past days)
+function rollbackDailyChallengeProgress(exerciseType, reps) {
+  const today = new Date().toISOString().split('T')[0];
+  const challenges = db.prepare('SELECT * FROM daily_challenges WHERE challenge_date = ?').all(today);
+  for (const challenge of challenges) {
+    const template = DAILY_CHALLENGE_TEMPLATES.find(t => t.key === challenge.challenge_key);
+    const increment = dailyChallengeIncrement(template, exerciseType, reps);
+    if (increment <= 0) continue;
+    const newProgress = Math.max(0, challenge.progress - increment);
+    const wasCompleted = challenge.completed === 1;
+    // Un-complete if dropping below target after refund
+    const isComplete = wasCompleted ? (newProgress >= challenge.target_value) : (newProgress >= challenge.target_value);
+    db.prepare('UPDATE daily_challenges SET progress = ?, completed = ? WHERE id = ?').run(newProgress, isComplete ? 1 : 0, challenge.id);
+  }
+}
+
+// Roll back weekly goal progress for the current week
+function rollbackWeeklyGoalProgress(exerciseType, reps) {
+  const weekStart = getWeekStart();
+  const goal = db.prepare('SELECT * FROM weekly_goals WHERE week_start = ?').get(weekStart);
+  if (!goal) return;
+  const template = WEEKLY_GOAL_TEMPLATES.find(t => t.key === goal.goal_type);
+  if (!template) return;
+  if (!(template.type === exerciseType || template.type === 'total')) return;
+  const newProgress = Math.max(0, goal.progress - reps);
+  const wasCompleted = goal.completed === 1;
+  const isComplete = wasCompleted ? (newProgress >= goal.target_value) : (newProgress >= goal.target_value);
+  db.prepare('UPDATE weekly_goals SET progress = ?, completed = ? WHERE id = ?').run(newProgress, isComplete ? 1 : 0, goal.id);
+}
+
+// Recompute current + longest streak from remaining workouts
+function recomputeStreaks() {
+  const dateRows = db.prepare("SELECT DISTINCT strftime('%Y-%m-%d', created_at) as d FROM workouts ORDER BY d DESC").all();
+  if (dateRows.length === 0) {
+    db.prepare('UPDATE user_stats SET current_streak = 0, longest_streak = MAX(longest_streak, 0), last_workout_date = NULL WHERE id = 1').run();
+    return { current_streak: 0, longest_streak: 0, last_workout_date: null };
+  }
+  // Walk backwards from the most recent date, counting consecutive days
+  let current = 0;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let cursor = new Date(dateRows[0].d + 'T00:00:00');
+  // If the most recent workout is older than yesterday, current streak is 0
+  const daysSinceLast = Math.floor((today - cursor) / (1000 * 60 * 60 * 24));
+  if (daysSinceLast > 1) {
+    current = 0;
+  } else {
+    // Count consecutive days from cursor going back
+    const dateSet = new Set(dateRows.map(r => r.d));
+    while (dateSet.has(cursor.toISOString().split('T')[0])) {
+      current++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+  }
+  const longestResult = db.prepare('SELECT longest_streak as prev FROM user_stats WHERE id = 1').get();
+  const longest = Math.max(longestResult?.prev || 0, current);
+  const lastDate = dateRows[0].d;
+  db.prepare('UPDATE user_stats SET current_streak = ?, longest_streak = ?, last_workout_date = ? WHERE id = 1').run(current, longest, lastDate);
+  return { current_streak: current, longest_streak: longest, last_workout_date: lastDate };
+}
+
+// Revoke achievements no longer satisfied by current stats
+function recheckAchievements() {
+  const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
+  // We need a minimal stats-shape for checkAchievements (just total_xp, current_streak, level, current_rank)
+  const earned = db.prepare('SELECT achievement_key FROM achievements').all().map(r => r.achievement_key);
+  if (earned.length === 0) return [];
+  // Build a fake "workout" arg (not used for most checks; needed for first_workout which only checks total_xp > 0)
+  const stillEarned = checkAchievements({}, stats);
+  const stillKeys = new Set(stillEarned.map(a => a.key));
+  const revoked = [];
+  for (const key of earned) {
+    if (!stillKeys.has(key)) {
+      db.prepare('DELETE FROM achievements WHERE achievement_key = ?').run(key);
+      revoked.push(key);
+    }
+  }
+  return revoked;
 }
 
 // Quick-log presets
@@ -905,24 +997,40 @@ app.post('/api/workouts', (req, res) => {
 app.delete('/api/workouts/:id', (req, res) => {
   const { id } = req.params;
   const workout = db.prepare('SELECT * FROM workouts WHERE id = ?').get(id);
-  
+
   if (!workout) {
     return res.status(404).json({ error: 'Workout not found' });
   }
-  
-  // Recalculate stats after deletion
+
+  // 1) Roll back daily challenge + weekly goal progress for this workout
+  rollbackDailyChallengeProgress(workout.exercise_type, workout.reps);
+  rollbackWeeklyGoalProgress(workout.exercise_type, workout.reps);
+
+  // 2) Delete the workout row
+  db.prepare('DELETE FROM workouts WHERE id = ?').run(id);
+
+  // 3) Refund XP and base RP from user_stats
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const xpCalc = calculateXP(workout.exercise_type, workout.reps, stats.selected_legend);
-  
+  const rpRefund = Math.round(workout.xp_earned * 0.4);
   const newTotalXP = Math.max(0, stats.total_xp - workout.xp_earned);
   const newLevel = calculateLevel(newTotalXP);
-  const newSeasonXP = Math.max(0, stats.season_xp - Math.round(workout.xp_earned * 0.4));
+  const newSeasonXP = Math.max(0, stats.season_xp - rpRefund);
   const newRank = getRank(newSeasonXP);
-  
-  db.prepare('DELETE FROM workouts WHERE id = ?').run(id);
-  db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`).run(newTotalXP, newLevel, newSeasonXP, newRank);
-  
-  res.json({ success: true });
+
+  db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`)
+    .run(newTotalXP, newLevel, newSeasonXP, newRank);
+
+  // 4) Recompute streak from remaining workouts
+  recomputeStreaks();
+
+  // 5) Revoke any achievement no longer met (best-effort — extra RP bonuses stay spent)
+  const revoked = recheckAchievements();
+
+  res.json({
+    success: true,
+    refunded: { xp: workout.xp_earned, rp: rpRefund },
+    revokedAchievements: revoked
+  });
 });
 
 app.get('/api/stats', (req, res) => {

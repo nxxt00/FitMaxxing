@@ -1816,11 +1816,27 @@
         }
 
         async function deleteWorkout(id) {
-            await apiDelete(`/api/workouts/${id}`);
+            const res = await apiDelete(`/api/workouts/${id}`);
+            if (res && res.success) {
+                const parts = [`-${res.refunded.xp} XP`, `-${res.refunded.rp} RP`];
+                if (res.revokedAchievements && res.revokedAchievements.length > 0) {
+                    parts.push(`Trophy revoked: ${res.revokedAchievements.join(', ')}`);
+                }
+                showNotification({
+                    title: 'Workout removed',
+                    sub: parts.join(' · '),
+                    type: 'success',
+                    icon: '↩️',
+                    duration: 4000
+                });
+            }
             loadStats();
             loadHistory();
             loadDailyChallenges();
             loadWeeklyGoal();
+            // Achievements UI shows revoked trophies on next load
+            const achTab = document.getElementById('achievements');
+            if (achTab && achTab.classList.contains('active')) loadAchievements();
         }
 
         function renderExercises() {

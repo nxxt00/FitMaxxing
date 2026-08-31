@@ -110,6 +110,7 @@ db.exec(`
     progress INTEGER DEFAULT 0,
     week_start DATE NOT NULL,
     completed INTEGER DEFAULT 0,
+    xp_reward INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -328,6 +329,7 @@ const EXERCISES = {
   // === STRETCH ===
   chest_stretch:{ name: 'Chest Stretch',unit: 'seconds', category: 'stretch',  difficulty: 1, youtubeId: 'O8rJw_TmC1Y' },
   neck_stretch: { name: 'Neck Stretch', unit: 'seconds', category: 'stretch',  difficulty: 1, youtubeId: 'FRNtLrMf-1A' },
+  wall_slides:  { name: 'Wall Slides', unit: 'reps',    category: 'stretch',  difficulty: 2, youtubeId: 'u9OQMBPrFgI' },
 };
 
 const LEGENDS = {
@@ -484,12 +486,12 @@ function updateDailyChallengeProgress(exerciseType, reps) {
 
 // Weekly goals
 const WEEKLY_GOAL_TEMPLATES = [
-  { key: 'beginner_pushups', text: 'Beginner: {target} pushups this week', type: 'pushups', baseTarget: 100, baseRP: 300 },
-  { key: 'intermediate_pushups', text: 'Intermediate: {target} pushups this week', type: 'pushups', baseTarget: 300, baseRP: 600 },
-  { key: 'beast_pushups', text: 'Beast Mode: {target} pushups this week', type: 'pushups', baseTarget: 500, baseRP: 1000 },
-  { key: 'plank_300', text: 'Core Focus: {target} seconds of plank this week', type: 'planks', baseTarget: 300, baseRP: 400 },
-  { key: 'squat_200', text: 'Leg Day: {target} squats this week', type: 'squats', baseTarget: 200, baseRP: 400 },
-  { key: 'total_reps_500', text: 'Grinder: {target} total reps this week', type: 'total', baseTarget: 500, baseRP: 500 }
+  { key: 'beginner_pushups',     text: 'Beginner: {target} pushups this week',     type: 'pushups', baseTarget: 100, baseXP: 800 },
+  { key: 'intermediate_pushups', text: 'Intermediate: {target} pushups this week', type: 'pushups', baseTarget: 300, baseXP: 1800 },
+  { key: 'beast_pushups',        text: 'Beast Mode: {target} pushups this week',  type: 'pushups', baseTarget: 500, baseXP: 3000 },
+  { key: 'plank_300',            text: 'Core Focus: {target} seconds of plank this week', type: 'planks',  baseTarget: 300, baseXP: 1200 },
+  { key: 'squat_200',            text: 'Leg Day: {target} squats this week',      type: 'squats',  baseTarget: 200, baseXP: 1200 },
+  { key: 'total_reps_500',       text: 'Grinder: {target} total reps this week',  type: 'total',   baseTarget: 500, baseXP: 1500 }
 ];
 
 function getWeekStart() {
@@ -513,9 +515,9 @@ function generateWeeklyGoal() {
   
   const template = WEEKLY_GOAL_TEMPLATES[Math.floor(Math.random() * WEEKLY_GOAL_TEMPLATES.length)];
   const scaledTarget = Math.round(template.baseTarget * difficulty.challengeMultiplier);
-  const scaledRP = Math.round(template.baseRP * difficulty.rewardMultiplier);
-  
-  db.prepare('INSERT INTO weekly_goals (goal_type, target_value, progress, week_start, completed) VALUES (?, ?, 0, ?, 0)').run(template.key, scaledTarget, weekStart);
+  const scaledXP = Math.round(template.baseXP * difficulty.rewardMultiplier);
+
+  db.prepare('INSERT INTO weekly_goals (goal_type, target_value, progress, week_start, completed, xp_reward) VALUES (?, ?, 0, ?, 0, ?)').run(template.key, scaledTarget, weekStart, scaledXP);
 }
 
 function updateWeeklyGoalProgress(exerciseType, reps) {
@@ -529,24 +531,24 @@ function updateWeeklyGoalProgress(exerciseType, reps) {
   
   const stats = db.prepare('SELECT current_rank FROM user_stats WHERE id = 1').get();
   const difficulty = getRankDifficulty(stats.current_rank);
-  const scaledRP = Math.round(template.baseRP * difficulty.rewardMultiplier);
-  
+  const scaledXP = Math.round(template.baseXP * difficulty.rewardMultiplier);
+
   let increment = 0;
   if (template.type === exerciseType || template.type === 'total') {
     increment = reps;
   }
-  
+
   if (increment > 0) {
     const newProgress = goal.progress + increment;
     const isComplete = newProgress >= goal.target_value;
-    
+
     db.prepare('UPDATE weekly_goals SET progress = ?, completed = ? WHERE id = ?').run(newProgress, isComplete ? 1 : 0, goal.id);
-    
+
     if (isComplete) {
-      return { completed: true, rp_bonus: scaledRP, text: goal.goal_type };
+      return { completed: true, xp_reward: scaledXP, text: goal.goal_type };
     }
   }
-  
+
   return null;
 }
 
@@ -741,9 +743,13 @@ function openApexPack() {
 }
 
 function calculateXP(exerciseType, reps, selectedLegend, currentRank) {
-  const exercise = EXERCISES[exerciseType] || { difficulty: 3 };
+  const exercise = EXERCISES[exerciseType] || { difficulty: 3, unit: 'reps' };
   const difficultyMult = DIFFICULTY_XP_MULTIPLIER[exercise.difficulty] ?? 1.0;
-  const baseXP = reps * 10 * difficultyMult;
+  // Per-unit XP rates: a rep and a second aren't equivalent work.
+  // 1 rep = 10 XP units, 1 second = 3 XP units (≈ 1 rep = 3.3s of plank).
+  // This keeps plank/wall-sit reasonable vs. pushups/squats.
+  const perUnitXP = exercise.unit === 'seconds' ? 3 : 10;
+  const baseXP = reps * perUnitXP * difficultyMult;
   const legend = LEGENDS[selectedLegend];
 
   let multiplier = 1.0;
@@ -777,8 +783,40 @@ function calculateXP(exerciseType, reps, selectedLegend, currentRank) {
   };
 }
 
+// === Level curve ===
+// XP required to reach level L (cumulative from level 1).
+// Formula: xpToReach(L) = 500 * (L-1) + 50 * sum_{i=1}^{L-1} i^1.5
+// Closed form approximation for sum of i^1.5 from 1 to n:
+//   sum_{i=1}^{n} i^1.5 ≈ (2/5) n^2.5 + (1/2) n^1.5 + (1/8) n^0.5 - 0.07
+// Result (cumulative XP needed):
+//   L 1 = 0
+//   L 5 = ~1,300
+//   L 10 = ~4,550
+//   L 20 = ~18,500
+const LEVEL_BASE_XP = 500;        // XP per level at L1 (linear floor)
+const LEVEL_GROWTH_FACTOR = 50;   // per-i^1.5 scaling
+
+function xpToReachLevel(L) {
+  if (L <= 1) return 0;
+  const n = L - 1;
+  // Linear floor
+  const linearPart = LEVEL_BASE_XP * n;
+  // Curve: 50 * ((2/5) n^2.5 + (1/2) n^1.5 + (1/8) n^0.5 - 0.07)
+  const n1 = Math.pow(n, 0.5);
+  const n2 = n1 * n1;   // n
+  const n3 = n2 * n1;   // n^1.5
+  const n5 = n3 * n2;   // n^2.5
+  const curvePart = LEVEL_GROWTH_FACTOR * ((2/5) * n5 + (1/2) * n3 + (1/8) * n1 - 0.07);
+  return Math.round(linearPart + curvePart);
+}
+
 function calculateLevel(totalXP) {
-  return Math.floor(totalXP / 500) + 1;
+  // Find the highest L where xpToReachLevel(L) <= totalXP
+  // Linear scan is fine — levels are O(sqrt(totalXP)) so even at 100k XP
+  // this is at most ~50 iterations.
+  let level = 1;
+  while (xpToReachLevel(level + 1) <= totalXP) level++;
+  return level;
 }
 
 function checkAchievements(workout, stats) {
@@ -955,6 +993,12 @@ const QUICK_PRESETS = {
     { label: '+20s', value: 20 },
     { label: '+30s', value: 30 }
   ],
+  wall_slides: [
+    { label: '+5', value: 5 },
+    { label: '+10', value: 10 },
+    { label: '+15', value: 15 },
+    { label: '+20', value: 20 }
+  ],
   squats: [
     { label: '+10', value: 10 },
     { label: '+20', value: 20 },
@@ -1104,9 +1148,10 @@ app.post('/api/workouts', (req, res) => {
 
   const weeklyResult = updateWeeklyGoalProgress(exerciseType, reps);
   if (weeklyResult && weeklyResult.completed) {
-    totalRpGained += weeklyResult.rp_bonus;
-    recordBonus(weeklyResult.rp_bonus, 'weekly_goal');
-    db.prepare('UPDATE user_stats SET season_xp = season_xp + ? WHERE id = 1').run(weeklyResult.rp_bonus);
+    // Weekly reward is XP only (RP is reserved for rank). The +50 RP
+    // dailies/achievements bonuses below still go to season_xp.
+    totalXpGained += weeklyResult.xp_reward;
+    db.prepare('UPDATE user_stats SET total_xp = total_xp + ? WHERE id = 1').run(weeklyResult.xp_reward);
   }
 
   let packDropped = null;
@@ -1200,15 +1245,16 @@ app.get('/api/stats', (req, res) => {
   // Touch the season system first so it can auto-roll if expired
   const season = getActiveSeason();
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const xpForNextLevel = stats.level * 500;
-  const xpInCurrentLevel = stats.total_xp - ((stats.level - 1) * 500);
+  const xpToNext = xpToReachLevel(stats.level + 1);
+  const xpFloor = xpToReachLevel(stats.level);
+  const xpInCurrentLevel = stats.total_xp - xpFloor;
   const rankProgress = getRankProgress(stats.season_xp);
 
   res.json({
     ...stats,
-    xpForNextLevel,
+    xpForNextLevel: xpToNext,
     xpInCurrentLevel,
-    progressPercent: Math.round((xpInCurrentLevel / 500) * 100),
+    progressPercent: Math.round((xpInCurrentLevel / (xpToNext - xpFloor)) * 100),
     rankProgress,
     season
   });
@@ -1347,6 +1393,18 @@ const EXERCISE_DETAILS = {
       'Keep breathing deeply throughout'
     ]
   },
+  wall_slides: {
+    description: 'Slow wall slides to strengthen the lower traps and improve shoulder mobility. Counteracts rounded shoulders from desk work.',
+    steps: [
+      'Stand with your back flat against a wall, feet about 15cm out',
+      'Press your lower back, upper back, and head into the wall',
+      'Bend your elbows to 90° with the backs of your hands and elbows touching the wall',
+      'Slowly slide your arms up the wall as far as you can while keeping contact',
+      'Pause at the top, then slide back down to the start',
+      'Keep your core engaged - don\'t arch your lower back off the wall',
+      'Move slowly and controlled, no shrugging the shoulders'
+    ]
+  },
   squats: {
     description: 'Bodyweight squats to strengthen legs and core. Keep your chest up to reinforce good posture.',
     steps: [
@@ -1372,47 +1430,45 @@ const EXERCISE_DETAILS = {
     ]
   }
 };
+// === Legend rotation ===
+// Legends rotate weekly — no user choice. The active legend is determined
+// by the current ISO week (seeded randomly on app start so all clients in the
+// same week see the same legend). Re-rolls every Monday.
+function pickLegendForWeek(weekStart) {
+  // Deterministic hash of the week string → index into the LEGENDS keys
+  const keys = Object.keys(LEGENDS);
+  let hash = 0;
+  for (let i = 0; i < weekStart.length; i++) {
+    hash = (hash * 31 + weekStart.charCodeAt(i)) >>> 0;
+  }
+  return keys[hash % keys.length];
+}
+
+function getActiveLegend() {
+  const stats = db.prepare('SELECT selected_legend, legend_week_start FROM user_stats WHERE id = 1').get();
+  const currentWeek = getWeekStart();
+  if (stats.legend_week_start === currentWeek && stats.selected_legend) {
+    return { key: stats.selected_legend, legend: LEGENDS[stats.selected_legend], weekStart: currentWeek };
+  }
+  // New week (or first run): pick a fresh legend and persist
+  const newKey = pickLegendForWeek(currentWeek);
+  db.prepare('UPDATE user_stats SET selected_legend = ?, legend_week_start = ? WHERE id = 1').run(newKey, currentWeek);
+  return { key: newKey, legend: LEGENDS[newKey], weekStart: currentWeek };
+}
+
 app.get('/api/legends', (req, res) => {
   res.json(LEGENDS);
 });
 
-app.post('/api/select-legend', (req, res) => {
-  const { legend } = req.body;
-  if (!LEGENDS[legend]) {
-    return res.status(400).json({ error: 'Invalid legend' });
-  }
-  
-  const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const currentWeek = getWeekStart();
-  
-  // Check if user is trying to change legend mid-week
-  if (stats.legend_week_start && stats.legend_week_start === currentWeek && stats.selected_legend !== legend) {
-    return res.status(400).json({ 
-      error: 'Legend locked for this week', 
-      message: `You picked ${stats.selected_legend} this week. Wait until next Monday to change.`,
-      currentLegend: stats.selected_legend
-    });
-  }
-  
-  // First time or new week - allow selection
-  db.prepare('UPDATE user_stats SET selected_legend = ?, legend_week_start = ? WHERE id = 1').run(legend, currentWeek);
-  
-  res.json({ success: true, legend: LEGENDS[legend], weekStart: currentWeek });
-});
-
 app.get('/api/legend-status', (req, res) => {
-  const stats = db.prepare('SELECT selected_legend, legend_week_start FROM user_stats WHERE id = 1').get();
-  const currentWeek = getWeekStart();
-  const canChange = !stats.legend_week_start || stats.legend_week_start !== currentWeek;
-  const activeKey = stats.selected_legend || 'wraith';
-  const active = LEGENDS[activeKey] || LEGENDS.wraith;
-
+  const active = getActiveLegend();
   res.json({
-    selectedLegend: activeKey,
-    legend: active,
-    weekStart: stats.legend_week_start,
-    currentWeek,
-    canChange
+    selectedLegend: active.key,
+    legend: active.legend,
+    weekStart: active.weekStart,
+    currentWeek: active.weekStart,
+    canChange: false,  // user can't change legends; they rotate weekly
+    autoRotated: true
   });
 });
 
@@ -1431,7 +1487,7 @@ app.get('/api/weekly-goal', (req, res) => {
   if (!goal) return res.json(null);
   
   const template = WEEKLY_GOAL_TEMPLATES.find(t => t.key === goal.goal_type);
-  res.json({ ...goal, text: template ? template.text : 'Weekly Goal', rp_bonus: template ? template.rp_bonus : 0 });
+  res.json({ ...goal, text: template ? template.text : 'Weekly Goal', xp_reward: goal.xp_reward || 0 });
 });
 
 app.get('/api/quick-presets', (req, res) => {

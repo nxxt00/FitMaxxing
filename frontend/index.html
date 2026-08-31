@@ -748,41 +748,7 @@
             line-height: 1.4;
         }
 
-        .programs-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 12px;
         }
-
-        .program-card {
-            background: var(--bg-tertiary);
-            border: 2px solid var(--border);
-            border-radius: 10px;
-            padding: 16px;
-        }
-
-        .program-card.active { border-color: var(--success); box-shadow: 0 0 16px rgba(16, 185, 129, 0.2); }
-        .program-card.completed { border-color: var(--accent-primary); }
-
-        .program-name { font-size: 1.1em; font-weight: 700; margin-bottom: 4px; }
-        .program-desc { font-size: 0.8em; color: var(--text-secondary); margin-bottom: 10px; }
-        .program-progress { font-size: 0.75em; color: var(--text-muted); margin-bottom: 8px; }
-
-        .program-btn {
-            background: var(--accent-gradient);
-            color: #0a0e1a;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 5px;
-            font-weight: 700;
-            cursor: pointer;
-            font-size: 0.8em;
-        }
-
-        .program-btn:hover { transform: translateY(-1px); }
-
-        .perks-grid {
-            display: grid;
             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
             gap: 10px;
         }
@@ -1089,14 +1055,13 @@
                     <div class="season-progress-bar"><div class="season-progress-fill" id="seasonProgressFill"></div></div>
                 </div>
 
-                <div class="legend-card-dash" id="legendDashCard" onclick="openLegendModal()" style="--legend-color: #a78bfa;">
+                <div class="legend-card-dash" id="legendDashCard" style="--legend-color: #a78bfa;">
                     <span class="legend-emoji" id="legendDashEmoji">👻</span>
                     <div class="legend-info">
                         <div class="legend-name-line"><span id="legendDashName">Wraith</span> · <span id="legendDashTitle" style="color: var(--text-muted); font-weight: 500; font-style: italic;">The Void Pilot</span></div>
                         <div class="legend-perk-line" id="legendDashPerk">+10% XP for core & stretches</div>
-                        <div class="legend-status" id="legendDashStatus">Tap to change · locked until Monday</div>
+                        <div class="legend-status" id="legendDashStatus">Auto-rotates every Monday</div>
                     </div>
-                    <span class="legend-lock-icon" id="legendDashLockIcon">🔒</span>
                 </div>
 
                 <div class="stats-grid">
@@ -1145,7 +1110,6 @@
 
             <div class="tab-nav">
                 <button class="tab-button active" onclick="switchTab('howto')">📚 How To</button>
-                <button class="tab-button" onclick="switchTab('programs')">📋 Programs</button>
                 <button class="tab-button" onclick="switchTab('perks')">⚡ Perks</button>
                 <button class="tab-button" onclick="switchTab('achievements')">🏆</button>
                 <button class="tab-button" onclick="switchTab('history')">📊</button>
@@ -1155,12 +1119,6 @@
                 <div class="tab-panel active" id="howto">
                     <h2 class="section-title">📚 How To</h2>
                     <div id="howtoList"></div>
-                </div>
-
-                <div class="tab-panel" id="programs">
-                    <h2 class="section-title">📋 Training Programs</h2>
-                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.85em;">Unlock programs from Apex Packs. Activate one to follow its daily routine.</p>
-                    <div class="programs-grid" id="programsList"></div>
                 </div>
 
                 <div class="tab-panel" id="perks">
@@ -1197,15 +1155,6 @@
 
     <div id="notification-stack" class="notification-stack"></div>
 
-        <div class="modal-overlay" id="legendModal" onclick="if(event.target===this) closeLegendModal()">
-            <div class="modal">
-                <button class="modal-close" onclick="closeLegendModal()">✕</button>
-                <div class="modal-title">🦸 Choose Your Legend</div>
-                <p style="color: var(--text-secondary); font-size: 0.85em; margin-bottom: 8px;">Lock-in lasts until Monday. Pick one to power your week.</p>
-                <div class="legends-grid" id="legendsList"></div>
-            </div>
-        </div>
-
     <script>
         const API_URL = window.location.origin;
         let userStats = {};
@@ -1214,7 +1163,6 @@
         let allSituations = [];
         let todaySummary = {}; // {exerciseKey: {reps, count}}
         let selectedLegend = 'wraith';
-        let legendCanChange = true;
 
         function initTheme() {
             const saved = localStorage.getItem('theme') || 'dark';
@@ -1636,79 +1584,17 @@
         }
 
         async function loadLegends() {
-            const allLegends = await apiGet('/api/legends');
+            // Legends are auto-rotated weekly — user has no choice. Just read
+            // the active legend and update the dashboard card.
             const status = await apiGet('/api/legend-status');
-            legendCanChange = status.canChange;
-            const activeKey = status.selectedLegend;
-            const active = status.legend || allLegends[activeKey];
-
-            // Update the dashboard card
+            const active = status.legend;
+            if (!active) return;
             document.getElementById('legendDashEmoji').textContent = active.emoji;
             document.getElementById('legendDashName').textContent = active.name;
             document.getElementById('legendDashTitle').textContent = active.title;
             document.getElementById('legendDashPerk').textContent = active.perk;
             document.getElementById('legendDashCard').style.setProperty('--legend-color', active.color);
-            document.getElementById('legendDashLockIcon').textContent = status.canChange ? '🔓' : '🔒';
-            document.getElementById('legendDashStatus').textContent = status.canChange
-                ? 'Tap to change your legend'
-                : 'Locked until Monday';
-
-            // Populate modal list (only rendered when opened, but safe to populate now)
-            const list = document.getElementById('legendsList');
-            list.innerHTML = Object.entries(allLegends).map(([key, legend]) => `
-                <div class="legend-card ${key === activeKey ? 'selected' : ''} ${!legendCanChange && key !== activeKey ? 'locked' : ''}" onclick="${legendCanChange || key === activeKey ? `selectLegend('${key}')` : 'showLegendLockedError()'}">
-                    <div class="legend-avatar" style="border-color: ${legend.color}; background: ${legend.color}20;">${legend.emoji}</div>
-                    <div class="legend-name">${legend.name}</div>
-                    <div class="legend-title">${legend.title}</div>
-                    <div class="legend-perk">${legend.perk}</div>
-                </div>
-            `).join('');
-        }
-
-        function showLegendLockedError() {
-            showNotification('🔒 Legend locked until next Monday', 'error');
-        }
-
-        async function selectLegend(key) {
-            const res = await apiPost('/api/select-legend', { legend: key });
-            if (res.success) {
-                selectedLegend = key;
-                legendCanChange = false;
-                showNotification(`🦸 Now: ${res.legend.name}`, 'achievement');
-                await loadLegends();
-                closeLegendModal();
-            } else if (res.error === 'Legend locked for this week') {
-                showLegendLockedError();
-            }
-        }
-
-        function openLegendModal() {
-            document.getElementById('legendModal').classList.add('show');
-            // populate the modal list fresh in case state changed
-            if (typeof allLegendsList !== 'undefined' && allLegendsList) {
-                renderModalLegends();
-            } else {
-                loadLegends(); // re-fetch
-            }
-        }
-
-        function closeLegendModal() {
-            document.getElementById('legendModal').classList.remove('show');
-        }
-
-        async function renderModalLegends() {
-            const allLegends = await apiGet('/api/legends');
-            const status = await apiGet('/api/legend-status');
-            const activeKey = status.selectedLegend;
-            const list = document.getElementById('legendsList');
-            list.innerHTML = Object.entries(allLegends).map(([key, legend]) => `
-                <div class="legend-card ${key === activeKey ? 'selected' : ''} ${!status.canChange && key !== activeKey ? 'locked' : ''}" onclick="${status.canChange || key === activeKey ? `selectLegend('${key}')` : 'showLegendLockedError()'}">
-                    <div class="legend-avatar" style="border-color: ${legend.color}; background: ${legend.color}20;">${legend.emoji}</div>
-                    <div class="legend-name">${legend.name}</div>
-                    <div class="legend-title">${legend.title}</div>
-                    <div class="legend-perk">${legend.perk}</div>
-                </div>
-            `).join('');
+            document.getElementById('legendDashStatus').textContent = 'Auto-rotates every Monday';
         }
 
         async function loadDailyChallenges() {
@@ -1744,26 +1630,6 @@
                     <div style="text-align: right; margin-top: 4px; font-size: 0.7em; color: var(--text-muted);">${goal.progress}/${goal.target_value}</div>
                 </div>
             `;
-        }
-
-        async function loadPrograms() {
-            const programs = await apiGet('/api/programs');
-            const list = document.getElementById('programsList');
-            if (!programs.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><p>No programs yet. Level up to earn Apex Packs!</p></div>'; return; }
-            list.innerHTML = programs.map(p => `
-                <div class="program-card ${p.active ? 'active' : ''} ${p.completed_at ? 'completed' : ''}">
-                    <div class="program-name">${p.program_name}</div>
-                    <div class="program-desc">${p.description}</div>
-                    <div class="program-progress">Day ${p.current_day} of ${p.duration_days}${p.active ? ' (Active)' : p.completed_at ? ' (Completed)' : ''}</div>
-                    ${!p.active && !p.completed_at ? `<button class="program-btn" onclick="startProgram(${p.id})">Start Program</button>` : ''}
-                </div>
-            `).join('');
-        }
-
-        async function startProgram(id) {
-            await apiPost(`/api/program/${id}/start`, {});
-            showNotification('Program started! Follow daily routine.', 'achievement');
-            loadPrograms();
         }
 
         async function loadPerks() {
@@ -2027,7 +1893,6 @@
             const targetBtn = document.querySelector(`.tab-button[onclick*="'${tabName}'"]`);
             if (targetBtn) targetBtn.classList.add('active');
             document.getElementById(tabName).classList.add('active');
-            if (tabName === 'programs') loadPrograms();
             if (tabName === 'perks') loadPerks();
             if (tabName === 'achievements') loadAchievements();
             if (tabName === 'history') loadHistory();
@@ -2035,7 +1900,7 @@
 
         // Keyboard shortcuts: 1-6 for tabs, [ / ] to cycle, Esc to close modals
         (function() {
-            const TABS = ['howto', 'programs', 'perks', 'achievements', 'history'];
+            const TABS = ['howto', 'perks', 'achievements', 'history'];
             document.addEventListener('keydown', (e) => {
                 // Don't hijack typing in inputs
                 const tag = (e.target && e.target.tagName) || '';

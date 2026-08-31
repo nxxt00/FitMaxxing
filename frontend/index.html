@@ -786,6 +786,10 @@
         .achievement-name { font-weight: 700; font-size: 0.8em; }
         .achievement-desc { font-size: 0.65em; color: var(--text-muted); margin-top: 2px; }
 
+        .achievement-progress { font-size: 0.62em; color: var(--text-secondary); margin-top: 6px; font-weight: 600; }
+        .achievement-progress-bar { background: var(--bg-secondary); border-radius: 999px; height: 4px; overflow: hidden; margin-top: 3px; }
+        .achievement-progress-fill { background: var(--accent-gradient); height: 100%; transition: width 0.6s; }
+
         .workout-history { max-height: 500px; overflow-y: auto; }
 
         .history-summary {
@@ -1466,16 +1470,23 @@
                 if (data.leveledUp && data.newLevel) {
                     setTimeout(() => showLevelUpModal(data.newLevel, data.packDropped), 4200);
                 }
-                if (data.achievementsUnlocked.length > 0) setTimeout(() => {
-                    const ach = data.achievementsUnlocked[0];
-                    showNotification({
-                        title: `Trophy: ${ach.name}`,
-                        sub: 'Achievement unlocked',
-                        type: 'achievement',
-                        icon: '🏆',
-                        duration: 5000
-                    });
-                }, 3600);
+                if (data.achievementsUnlocked && data.achievementsUnlocked.length > 0) {
+                    // Big celebration for the first one
+                    setTimeout(() => showAchievementCelebration(data.achievementsUnlocked[0]), 3600);
+                    // Toast for any additional ones
+                    if (data.achievementsUnlocked.length > 1) {
+                        setTimeout(() => {
+                            const extra = data.achievementsUnlocked.slice(1).map(a => a.name).join(', ');
+                            showNotification({
+                                title: `+${data.achievementsUnlocked.length - 1} more trophies`,
+                                sub: extra,
+                                type: 'achievement',
+                                icon: '🏆',
+                                duration: 5000
+                            });
+                        }, 5400);
+                    }
+                }
                 if (data.completedChallenges && data.completedChallenges.length > 0) data.completedChallenges.forEach((ch, i) => setTimeout(() => showNotification({
                     title: `Daily Complete! +${ch.xpReward} XP`,
                     sub: ch.text,
@@ -1648,7 +1659,10 @@
         }
 
         async function loadAchievements() {
-            const unlocked = await apiGet('/api/achievements');
+            const [unlocked, progress] = await Promise.all([
+                apiGet('/api/achievements'),
+                apiGet('/api/achievements/progress').catch(() => ({}))
+            ]);
             const unlockedKeys = new Set(unlocked.map(a => a.achievement_key));
             const allAchievements = [
                 { key: 'first_workout', name: 'First Steps', desc: 'First workout', icon: '🎯' },
@@ -1661,15 +1675,50 @@
                 { key: 'apex_predator', name: 'Apex Predator', desc: 'Top rank', icon: '🐆' }
             ];
             const grid = document.getElementById('achievementGrid');
-            grid.innerHTML = allAchievements.map(ach => `
-                <div class="achievement ${unlockedKeys.has(ach.key) ? 'unlocked' : ''}">
+            grid.innerHTML = allAchievements.map(ach => {
+                const isUnlocked = unlockedKeys.has(ach.key);
+                const p = progress[ach.key] || {};
+                const progressHint = !isUnlocked && p && p.target
+                    ? `<div class="achievement-progress">${p.current}/${p.target} ${p.unit}</div>
+                       <div class="achievement-progress-bar"><div class="achievement-progress-fill" style="width: ${Math.min(100, (p.current / p.target) * 100)}%"></div></div>`
+                    : '';
+                return `
+                <div class="achievement ${isUnlocked ? 'unlocked' : ''}">
                     <div class="achievement-icon">${ach.icon}</div>
                     <div class="achievement-name">${ach.name}</div>
                     <div class="achievement-desc">${ach.desc}</div>
+                    ${progressHint}
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
 
+        // Big achievement celebration (when one is unlocked, reuses levelup modal styling)
+        const ACHIEVEMENT_ICONS = {
+            first_workout: '🎯', hundred_pushups: '💪', week_streak: '🔥',
+            level_5: '⭐', level_10: '👑', reach_gold: '🥇',
+            reach_diamond: '💎', apex_predator: '🐆'
+        };
+        function showAchievementCelebration(achievement) {
+            const existing = document.getElementById('achievementOverlay');
+            if (existing) existing.remove();
+            const icon = ACHIEVEMENT_ICONS[achievement.key] || '🏆';
+            const overlay = document.createElement('div');
+            overlay.id = 'achievementOverlay';
+            overlay.className = 'levelup-overlay';
+            overlay.innerHTML = `
+                <div class="levelup-modal" style="border-color: var(--accent-primary); box-shadow: 0 0 60px rgba(124, 58, 237, 0.5);">
+                    <div class="levelup-icon">${icon}</div>
+                    <div class="levelup-title" style="color: var(--accent-primary);">Trophy Unlocked</div>
+                    <div class="levelup-sub" style="font-size: 1.15em; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">${achievement.name}</div>
+                    <div class="levelup-pack" style="border-color: var(--accent-primary);">+50 RP bonus</div>
+                    <button class="levelup-btn" style="background: var(--accent-primary);" onclick="document.getElementById('achievementOverlay').remove()">SWEET</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('show'));
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        }
         async function loadHistory() {
             const workouts = await apiGet('/api/workouts');
             const list = document.getElementById('historyList');

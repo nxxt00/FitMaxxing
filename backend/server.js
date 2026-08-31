@@ -965,6 +965,23 @@ app.get('/api/achievements', (req, res) => {
   res.json(achievements);
 });
 
+// Live progress for locked achievements (e.g. "47/100 pushups for Centurion")
+app.get('/api/achievements/progress', (req, res) => {
+  const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get() || {};
+  const totalPushups = (db.prepare("SELECT COALESCE(SUM(reps), 0) as total FROM workouts WHERE exercise_type = 'pushups'").get() || {}).total || 0;
+  const totalWorkouts = (db.prepare("SELECT COUNT(*) as c FROM workouts").get() || {}).c || 0;
+  res.json({
+    first_workout:     { current: Math.min(totalWorkouts, 1),  target: 1,   unit: 'workouts' },
+    hundred_pushups:   { current: totalPushups,                target: 100, unit: 'pushups' },
+    week_streak:       { current: Math.min(stats.current_streak || 0, 7), target: 7, unit: 'days' },
+    level_5:           { current: Math.min(stats.level || 1, 5),         target: 5, unit: 'level' },
+    level_10:          { current: Math.min(stats.level || 1, 10),        target: 10, unit: 'level' },
+    reach_gold:        { current: (stats.current_rank || '').includes('Gold') ? 1 : 0,        target: 1, unit: 'rank' },
+    reach_diamond:     { current: (stats.current_rank || '').includes('Diamond') ? 1 : 0,     target: 1, unit: 'rank' },
+    apex_predator:     { current: stats.current_rank === 'Apex Predator' ? 1 : 0,             target: 1, unit: 'rank' },
+  });
+});
+
 app.get('/api/exercises', (req, res) => {
   const exerciseData = {
     pushups: {

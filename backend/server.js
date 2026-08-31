@@ -29,7 +29,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS user_stats (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     total_xp INTEGER DEFAULT 0,
-    level INTEGER DEFAULT 1,
+    level INTEGER DEFAULT 0,
     current_streak INTEGER DEFAULT 0,
     longest_streak INTEGER DEFAULT 0,
     last_workout_date DATE,
@@ -213,7 +213,7 @@ if (!ledgerColumnNames.has('rp_amount')) {
   db.exec("ALTER TABLE workout_rp_ledger ADD COLUMN rp_amount INTEGER DEFAULT 0");
 }
 
-db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, selected_legend, season_xp, current_rank, packs_opened, streak_freeze_available) VALUES (1, 0, 1, 0, 0, ?, 0, ?, 0, 0)').run('wraith', 'Bronze IV');
+db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, selected_legend, season_xp, current_rank, packs_opened, streak_freeze_available) VALUES (1, 0, 0, 0, 0, ?, 0, ?, 0, 0)').run('wraith', 'Bronze IV');
 
 // Rank thresholds
 const RANK_TIERS = [
@@ -335,14 +335,14 @@ const DIFFICULTY_XP_MULTIPLIER = { 1: 0.6, 2: 0.8, 3: 1.0, 4: 1.3, 5: 1.6 };
 const EXERCISES = {
   // === STRENGTH ===
   pushups:      { name: 'Pushups',      unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'IODxDxX7oi4' },
-  dead_bugs:    { name: 'Dead Bugs',    unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'IpP8j8b3xY4' },
+  dead_bugs:    { name: 'Dead Bugs',    unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'zechBkcIMf0' },
   planks:       { name: 'Plank',        unit: 'seconds', category: 'strength', difficulty: 2, youtubeId: 'ASdvN_XEl_c' },
   squats:       { name: 'Squats',       unit: 'reps',    category: 'strength', difficulty: 3, youtubeId: 'aclHkVaku9U' },
-  wall_sits:    { name: 'Wall Sit',     unit: 'seconds', category: 'strength', difficulty: 2, youtubeId: 'w7qVVT_h_lI' },
+  wall_sits:    { name: 'Wall Sit',     unit: 'seconds', category: 'strength', difficulty: 2, youtubeId: 'cWTZ8Am1Ee0' },
   // === STRETCH ===
   chest_stretch:{ name: 'Chest Stretch',unit: 'seconds', category: 'stretch',  difficulty: 1, youtubeId: 'O8rJw_TmC1Y' },
   neck_stretch: { name: 'Neck Stretch', unit: 'seconds', category: 'stretch',  difficulty: 1, youtubeId: 'FRNtLrMf-1A' },
-  wall_slides:  { name: 'Wall Slides', unit: 'reps',    category: 'stretch',  difficulty: 2, youtubeId: 'u9OQMBPrFgI' },
+  wall_slides:  { name: 'Wall Slides', unit: 'seconds', category: 'stretch',  difficulty: 2, youtubeId: 'u9OQMBPrFgI' },
 };
 
 const LEGENDS = {
@@ -797,22 +797,24 @@ function calculateXP(exerciseType, reps, selectedLegend, currentRank) {
 }
 
 // === Level curve ===
-// XP required to reach level L (cumulative from level 1).
-// Formula: xpToReach(L) = 500 * (L-1) + 50 * sum_{i=1}^{L-1} i^1.5
+// Levels start at 0 (0 XP). XP required to reach level L (cumulative).
+// The internal math uses a 1-based index n = L (level 0 → n=1):
+//   xpToReachLevel(L) = 500*L + 50 * sum_{i=1}^{L} i^1.5  ... level 0 handled separately
 // Closed form approximation for sum of i^1.5 from 1 to n:
 //   sum_{i=1}^{n} i^1.5 ≈ (2/5) n^2.5 + (1/2) n^1.5 + (1/8) n^0.5 - 0.07
-// Result (cumulative XP needed):
-//   L 1 = 0
-//   L 5 = ~1,300
-//   L 10 = ~4,550
-//   L 20 = ~18,500
-const LEVEL_BASE_XP = 500;        // XP per level at L1 (linear floor)
+// Result (cumulative XP needed to REACH level L, starting at level 0):
+//   L 0 = 0
+//   L 1 = 500
+//   L 5 = ~1,800
+//   L 10 = ~5,050
+//   L 20 = ~19,000
+const LEVEL_BASE_XP = 500;        // XP for level 0 → 1
 const LEVEL_GROWTH_FACTOR = 50;   // per-i^1.5 scaling
 
 function xpToReachLevel(L) {
-  if (L <= 1) return 0;
-  const n = L - 1;
-  // Linear floor
+  if (L <= 0) return 0;
+  const n = L; // 1-based index
+  // Linear floor: 500 * L (for levels 0→L)
   const linearPart = LEVEL_BASE_XP * n;
   // Curve: 50 * ((2/5) n^2.5 + (1/2) n^1.5 + (1/8) n^0.5 - 0.07)
   const n1 = Math.pow(n, 0.5);
@@ -827,7 +829,7 @@ function calculateLevel(totalXP) {
   // Find the highest L where xpToReachLevel(L) <= totalXP
   // Linear scan is fine — levels are O(sqrt(totalXP)) so even at 100k XP
   // this is at most ~50 iterations.
-  let level = 1;
+  let level = 0;
   while (xpToReachLevel(level + 1) <= totalXP) level++;
   return level;
 }
@@ -982,40 +984,39 @@ function recheckAchievements() {
 // Quick-log presets
 const QUICK_PRESETS = {
   pushups: [
-    { label: '+5', value: 5 },
+    { label: '+15', value: 15 },
+    { label: '+20', value: 20 },
+    { label: '+30', value: 30 },
+    { label: '+40', value: 40 }
+  ],
+  planks: [
+    { label: '+60s', value: 60 },
+    { label: '+90s', value: 90 },
+    { label: '+120s', value: 120 }
+  ],
+  dead_bugs: [
     { label: '+10', value: 10 },
     { label: '+15', value: 15 },
     { label: '+20', value: 20 },
     { label: '+25', value: 25 }
   ],
-  planks: [
-    { label: '+15s', value: 15 },
-    { label: '+30s', value: 30 },
-    { label: '+45s', value: 45 },
-    { label: '+60s', value: 60 },
-    { label: '+90s', value: 90 }
-  ],
-  dead_bugs: [
-    { label: '+5', value: 5 },
-    { label: '+10', value: 10 },
-    { label: '+15', value: 15 },
-    { label: '+20', value: 20 }
-  ],
   chest_stretch: [
-    { label: '+15s', value: 15 },
     { label: '+30s', value: 30 },
-    { label: '+45s', value: 45 }
+    { label: '+60s', value: 60 },
+    { label: '+90s', value: 90 },
+    { label: '+120s', value: 120 }
   ],
   neck_stretch: [
-    { label: '+10s', value: 10 },
-    { label: '+20s', value: 20 },
-    { label: '+30s', value: 30 }
+    { label: '+30s', value: 30 },
+    { label: '+60s', value: 60 },
+    { label: '+90s', value: 90 },
+    { label: '+120s', value: 120 }
   ],
   wall_slides: [
-    { label: '+5', value: 5 },
-    { label: '+10', value: 10 },
-    { label: '+15', value: 15 },
-    { label: '+20', value: 20 }
+    { label: '+30s', value: 30 },
+    { label: '+60s', value: 60 },
+    { label: '+90s', value: 90 },
+    { label: '+120s', value: 120 }
   ],
   squats: [
     { label: '+10', value: 10 },
@@ -1024,11 +1025,10 @@ const QUICK_PRESETS = {
     { label: '+50', value: 50 }
   ],
   wall_sits: [
-    { label: '+15s', value: 15 },
-    { label: '+30s', value: 30 },
     { label: '+45s', value: 45 },
     { label: '+60s', value: 60 },
-    { label: '+90s', value: 90 }
+    { label: '+90s', value: 90 },
+    { label: '+120s', value: 120 }
   ]
 };
 

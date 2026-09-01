@@ -1047,19 +1047,26 @@ const APEX_SITUATIONS = [
 // Log workout endpoint
 app.post('/api/workouts', (req, res) => {
   const { exerciseType, reps, notes, source = 'manual' } = req.body;
-  
-  if (!exerciseType || !reps || reps < 1) {
-    return res.status(400).json({ error: 'Invalid workout data' });
-  }
-  
-  if (!EXERCISES[exerciseType]) {
+
+  // === Input validation ===
+  if (typeof exerciseType !== 'string' || !EXERCISES[exerciseType]) {
     return res.status(400).json({ error: 'Invalid exercise type' });
   }
-  
+  if (!Number.isInteger(reps) || reps < 1 || reps > 10000) {
+    return res.status(400).json({ error: 'Reps must be a positive integer between 1 and 10000' });
+  }
+  if (notes != null && (typeof notes !== 'string' || notes.length > 500)) {
+    return res.status(400).json({ error: 'Notes must be a string up to 500 chars' });
+  }
+  const validSources = new Set(['manual', 'quick_log', 'apex_situation']);
+  if (!validSources.has(source)) {
+    return res.status(400).json({ error: 'Invalid source' });
+  }
+
   const exercise = EXERCISES[exerciseType];
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
   const xpCalc = calculateXP(exerciseType, reps, stats.selected_legend, stats.current_rank);
-  
+
   // Check for active XP boost perk
   const now = new Date().toISOString();
   const activeBoost = db.prepare('SELECT * FROM perks WHERE perk_type = ? AND used = 1 AND expires_at > ?').get('xp_boost', now);
@@ -1074,203 +1081,243 @@ app.post('/api/workouts', (req, res) => {
   if (activeRpBoost) {
     xpCalc.rp *= 2;
   }
-  
+
   const xpEarned = xpCalc.xp;
   const rpEarned = xpCalc.rp;
   const today = new Date().toISOString().split('T')[0];
-  
-  const result = db.prepare('INSERT INTO workouts (exercise_type, reps, unit, xp_earned, notes, source) VALUES (?, ?, ?, ?, ?, ?)').run(exerciseType, reps, exercise.unit, xpEarned, notes || '', source);
-  const workoutId = result.lastInsertRowid;
 
-  // Helper: record a bonus RP entry in the ledger for this workout
-  const recordBonus = (xpAmt, rpAmt, reason) => {
-    if (xpAmt > 0 || rpAmt > 0) {
-      db.prepare('INSERT INTO workout_rp_ledger (workout_id, xp_amount, rp_amount, reason) VALUES (?, ?, ?, ?)').run(workoutId, xpAmt || 0, rpAmt || 0, reason);
-    }
-  };
+  // === Everything below runs inside a single SQLite transaction ===
+  // If any step throws, the whole workout (XP+RP+streak+achievements+challenges+weekly+pack) rolls back
+  // so a crash mid-flight can't leave the user with double-counted XP or a half-updated rank.
+  const tx = db.transaction(() => {
+    const result = db.prepare('INSERT INTO workouts (exercise_type, reps, unit, xp_earned, notes, source) VALUES (?, ?, ?, ?, ?, ?)').run(exerciseType, reps, exercise.unit, xpEarned, notes || '', source);
+    const workoutId = result.lastInsertRowid;
 
-  let totalXpGained = xpEarned;
-  let totalRpGained = rpEarned;
-  recordBonus(xpEarned, rpEarned, 'base');
+    // Helper: record a bonus RP entry in the ledger for this workout
+    const recordBonus = (xpAmt, rpAmt, reason) => {
+      if (xpAmt > 0 || rpAmt > 0) {
+        db.prepare('INSERT INTO workout_rp_ledger (workout_id, xp_amount, rp_amount, reason) VALUES (?, ?, ?, ?)').run(workoutId, xpAmt || 0, rpAmt || 0, reason);
+      }
+    };
 
-  const newTotalXP = stats.total_xp + totalXpGained;
-  const newLevel = calculateLevel(newTotalXP);
-  const newSeasonXP = stats.season_xp + totalRpGained;
-  const newRank = getRank(newSeasonXP);
+    let totalXpGained = xpEarned;
+    let totalRpGained = rpEarned;
+    recordBonus(xpEarned, rpEarned, 'base');
 
-  let newStreak = stats.current_streak;
-  let freezeConsumed = false;
-  if (!stats.last_workout_date) {
-    newStreak = 1;
-  } else {
-    const lastDate = new Date(stats.last_workout_date);
-    const todayDate = new Date(today);
-    const daysDiff = Math.floor((todayDate - lastDate) / (1000 * 60 * 60 * 24));
+    const newTotalXP = stats.total_xp + totalXpGained;
+    const newLevel = calculateLevel(newTotalXP);
+    const newSeasonXP = stats.season_xp + totalRpGained;
+    const newRank = getRank(newSeasonXP);
 
-    if (daysDiff === 0) {
-      newStreak = stats.current_streak;
-    } else if (daysDiff === 1) {
-      newStreak = stats.current_streak + 1;
+    let newStreak = stats.current_streak;
+    let freezeConsumed = false;
+    if (!stats.last_workout_date) {
+      newStreak = 1;
     } else {
-      // Streak would break — use a freeze credit if available
-      if (stats.streak_freeze_available > 0) {
-        db.prepare('UPDATE user_stats SET streak_freeze_available = streak_freeze_available - 1 WHERE id = 1').run();
-        freezeConsumed = true;
-        newStreak = stats.current_streak + 1; // keep it alive
+      const lastDate = new Date(stats.last_workout_date);
+      const todayDate = new Date(today);
+      const daysDiff = Math.floor((todayDate - lastDate) / (1000 * 60 * 60 * 24));
+
+      if (daysDiff === 0) {
+        newStreak = stats.current_streak;
+      } else if (daysDiff === 1) {
+        newStreak = stats.current_streak + 1;
       } else {
-        newStreak = 1;
+        // Streak would break — use a freeze credit if available
+        if (stats.streak_freeze_available > 0) {
+          db.prepare('UPDATE user_stats SET streak_freeze_available = streak_freeze_available - 1 WHERE id = 1').run();
+          freezeConsumed = true;
+          newStreak = stats.current_streak + 1; // keep it alive
+        } else {
+          newStreak = 1;
+        }
       }
     }
-  }
 
-  // Streak milestone bonus
-  let streakBonus = null;
-  const oldLongestStreak = stats.longest_streak;
-  const newLongestStreak = Math.max(stats.longest_streak, newStreak);
+    // Streak milestone bonus
+    let streakBonus = null;
+    const oldLongestStreak = stats.longest_streak;
+    const newLongestStreak = Math.max(stats.longest_streak, newStreak);
 
-  if (newStreak === 7 && oldLongestStreak < 7) {
-    totalRpGained += 50;
-    recordBonus(0, 50, 'streak');
-    streakBonus = { text: '7-day streak!', rp: 50 };
-  } else if (newStreak === 14 && oldLongestStreak < 14) {
-    totalRpGained += 100;
-    recordBonus(0, 100, 'streak');
-    streakBonus = { text: '14-day streak!', rp: 100 };
-  } else if (newStreak === 30 && oldLongestStreak < 30) {
-    totalRpGained += 200;
-    recordBonus(0, 200, 'streak');
-    streakBonus = { text: '30-day streak!', rp: 200 };
-  }
+    if (newStreak === 7 && oldLongestStreak < 7) {
+      totalRpGained += 50;
+      recordBonus(0, 50, 'streak');
+      streakBonus = { text: '7-day streak!', rp: 50 };
+    } else if (newStreak === 14 && oldLongestStreak < 14) {
+      totalRpGained += 100;
+      recordBonus(0, 100, 'streak');
+      streakBonus = { text: '14-day streak!', rp: 100 };
+    } else if (newStreak === 30 && oldLongestStreak < 30) {
+      totalRpGained += 200;
+      recordBonus(0, 200, 'streak');
+      streakBonus = { text: '30-day streak!', rp: 200 };
+    }
 
-  db.prepare(`UPDATE user_stats SET
-    total_xp = ?, level = ?, current_streak = ?, longest_streak = ?,
-    last_workout_date = ?, season_xp = ?, current_rank = ?
-    WHERE id = 1`).run(newTotalXP, newLevel, newStreak, newLongestStreak, today, stats.season_xp + totalRpGained, newRank);
+    db.prepare(`UPDATE user_stats SET
+      total_xp = ?, level = ?, current_streak = ?, longest_streak = ?,
+      last_workout_date = ?, season_xp = ?, current_rank = ?
+      WHERE id = 1`).run(newTotalXP, newLevel, newStreak, newLongestStreak, today, stats.season_xp + totalRpGained, newRank);
 
-  const newStats = { total_xp: newTotalXP, level: newLevel, current_streak: newStreak, current_rank: newRank };
-  const achievements = checkAchievements({ exerciseType, reps }, newStats);
+    const newStats = { total_xp: newTotalXP, level: newLevel, current_streak: newStreak, current_rank: newRank };
+    const achievements = checkAchievements({ exerciseType, reps }, newStats);
 
-  let achievementRpBonus = 0;
-  achievements.forEach(ach => {
-    db.prepare('INSERT INTO achievements (achievement_key, achievement_name, source_workout_id) VALUES (?, ?, ?)').run(ach.key, ach.name, workoutId);
-    achievementRpBonus += 50;
+    let achievementRpBonus = 0;
+    achievements.forEach(ach => {
+      db.prepare('INSERT INTO achievements (achievement_key, achievement_name, source_workout_id) VALUES (?, ?, ?)').run(ach.key, ach.name, workoutId);
+      achievementRpBonus += 50;
+    });
+    recordBonus(0, achievementRpBonus, 'achievement');
+
+    if (achievementRpBonus > 0) {
+      totalRpGained += achievementRpBonus;
+      db.prepare('UPDATE user_stats SET season_xp = season_xp + ? WHERE id = 1').run(achievementRpBonus);
+    }
+
+    const completedChallenges = updateDailyChallengeProgress(exerciseType, reps);
+
+    let dailyCompletionRP = 0;
+    let dailyCompletionXP = 0;
+    completedChallenges.forEach(ch => {
+      totalXpGained += ch.xpReward;
+      dailyCompletionXP += ch.xpReward;
+      dailyCompletionRP += 50;
+      totalRpGained += 50; // Bonus RP for completing challenges
+    });
+    recordBonus(dailyCompletionXP, dailyCompletionRP, 'daily_complete');
+
+    if (completedChallenges.length > 0) {
+      const finalTotalXP = newTotalXP + completedChallenges.reduce((sum, c) => sum + c.xpReward, 0);
+      db.prepare('UPDATE user_stats SET total_xp = ?, level = ? WHERE id = 1').run(finalTotalXP, calculateLevel(finalTotalXP));
+    }
+
+    const weeklyResult = updateWeeklyGoalProgress(exerciseType, reps);
+    if (weeklyResult && weeklyResult.completed) {
+      // Weekly reward is XP only (RP is reserved for rank).
+      totalXpGained += weeklyResult.xp_reward;
+      recordBonus(weeklyResult.xp_reward, 0, 'weekly_goal');
+      db.prepare('UPDATE user_stats SET total_xp = total_xp + ? WHERE id = 1').run(weeklyResult.xp_reward);
+    }
+
+    let packDropped = null;
+    if (newLevel > stats.level) {
+      packDropped = openApexPack();
+      totalRpGained += 25; // RP for leveling up
+      recordBonus(0, 25, 'level_up');
+      db.prepare('UPDATE user_stats SET season_xp = season_xp + 25 WHERE id = 1').run();
+    }
+
+    return {
+      workoutId, totalXpGained, totalRpGained, achievements, completedChallenges,
+      weeklyResult, packDropped, streakBonus, freezeConsumed,
+      newLevel, newRank, rankChanged: newRank !== stats.current_rank
+    };
   });
-  recordBonus(0, achievementRpBonus, 'achievement');
 
-  if (achievementRpBonus > 0) {
-    totalRpGained += achievementRpBonus;
-    db.prepare('UPDATE user_stats SET season_xp = season_xp + ? WHERE id = 1').run(achievementRpBonus);
+  let txResult;
+  try {
+    txResult = tx();
+  } catch (err) {
+    console.error('[POST /api/workouts] transaction failed:', err);
+    return res.status(500).json({ error: 'Failed to log workout' });
   }
 
-  const completedChallenges = updateDailyChallengeProgress(exerciseType, reps);
-
-  let dailyCompletionRP = 0;
-  let dailyCompletionXP = 0;
-  completedChallenges.forEach(ch => {
-    totalXpGained += ch.xpReward;
-    dailyCompletionXP += ch.xpReward;
-    dailyCompletionRP += 50;
-    totalRpGained += 50; // Bonus RP for completing challenges
-  });
-  recordBonus(dailyCompletionXP, dailyCompletionRP, 'daily_complete');
-
-  if (completedChallenges.length > 0) {
-    const finalTotalXP = newTotalXP + completedChallenges.reduce((sum, c) => sum + c.xpReward, 0);
-    db.prepare('UPDATE user_stats SET total_xp = ?, level = ? WHERE id = 1').run(finalTotalXP, calculateLevel(finalTotalXP));
-  }
-
-  const weeklyResult = updateWeeklyGoalProgress(exerciseType, reps);
-  if (weeklyResult && weeklyResult.completed) {
-    // Weekly reward is XP only (RP is reserved for rank).
-    totalXpGained += weeklyResult.xp_reward;
-    recordBonus(weeklyResult.xp_reward, 0, 'weekly_goal');
-    db.prepare('UPDATE user_stats SET total_xp = total_xp + ? WHERE id = 1').run(weeklyResult.xp_reward);
-  }
-
-  let packDropped = null;
-  if (newLevel > stats.level) {
-    packDropped = openApexPack();
-    totalRpGained += 25; // RP for leveling up
-    recordBonus(0, 25, 'level_up');
-    db.prepare('UPDATE user_stats SET season_xp = season_xp + 25 WHERE id = 1').run();
-  }
-  // Touch the season system so it auto-rolls on expiry
+  // Touch the season system so it auto-rolls on expiry (outside the transaction —
+  // it may commit a new season row, but never modifies the workout ledger).
   const activeSeason = getActiveSeason();
-  const rankChanged = newRank !== stats.current_rank;
 
   res.json({
     success: true,
     xpEarned,
-    rpEarned: totalRpGained,
+    rpEarned: txResult.totalRpGained,
     bonusApplied: xpCalc.bonusApplied,
     multiplier: xpCalc.multiplier,
-    totalXP: newTotalXP + completedChallenges.reduce((sum, c) => sum + c.xpReward, 0),
-    level: newLevel,
-    newLevel,
-    leveledUp: newLevel > stats.level,
-    currentStreak: newStreak,
-    achievementsUnlocked: achievements,
-    packDropped,
-    rankChanged,
+    totalXP: stats.total_xp + txResult.totalXpGained,
+    level: txResult.newLevel,
+    newLevel: txResult.newLevel,
+    leveledUp: txResult.newLevel > stats.level,
+    currentStreak: txResult.newStreak,
+    achievementsUnlocked: txResult.achievements,
+    packDropped: txResult.packDropped,
+    rankChanged: txResult.rankChanged,
     oldRank: stats.current_rank,
-    newRank,
-    completedChallenges,
-    weeklyGoalCompleted: weeklyResult,
-    streakBonus,
-    freezeConsumed,
+    newRank: txResult.newRank,
+    completedChallenges: txResult.completedChallenges,
+    weeklyGoalCompleted: txResult.weeklyResult,
+    streakBonus: txResult.streakBonus,
+    freezeConsumed: txResult.freezeConsumed,
     season: activeSeason
   });
 });
 
 app.delete('/api/workouts/:id', (req, res) => {
   const { id } = req.params;
-  const workout = db.prepare('SELECT * FROM workouts WHERE id = ?').get(id);
-
-  if (!workout) {
-    return res.status(404).json({ error: 'Workout not found' });
+  const idNum = parseInt(id, 10);
+  if (!Number.isInteger(idNum) || idNum < 1) {
+    return res.status(400).json({ error: 'Invalid workout id' });
   }
 
-  // 1) Compute this workout's full XP/RP contribution from its ledger rows
-  const ledgerRows = db.prepare('SELECT xp_amount, rp_amount, reason FROM workout_rp_ledger WHERE workout_id = ?').all(id);
-  const workoutXp = ledgerRows.reduce((s, r) => s + (r.xp_amount || 0), 0);
-  const workoutRp = ledgerRows.reduce((s, r) => s + (r.rp_amount || 0), 0);
-  // Fallback if no ledger rows exist (legacy workouts): refund base XP + 40% RP
-  const effXpToRefund = workoutXp > 0 ? workoutXp : workout.xp_earned;
-  const effRpToRefund = workoutRp > 0 ? workoutRp : Math.round(workout.xp_earned * 0.4);
+  // === Wrap refund + streak recompute + achievement revocation in one transaction ===
+  // If anything throws mid-flight, the user's XP/RP/streak/achievements stay consistent.
+  const tx = db.transaction(() => {
+    const workout = db.prepare('SELECT * FROM workouts WHERE id = ?').get(idNum);
+    if (!workout) return { notFound: true };
 
-  // 2) Roll back daily challenge + weekly goal progress
-  rollbackDailyChallengeProgress(workout.exercise_type, workout.reps);
-  rollbackWeeklyGoalProgress(workout.exercise_type, workout.reps);
+    // 1) Compute this workout's full XP/RP contribution from its ledger rows
+    const ledgerRows = db.prepare('SELECT xp_amount, rp_amount, reason FROM workout_rp_ledger WHERE workout_id = ?').all(idNum);
+    const workoutXp = ledgerRows.reduce((s, r) => s + (r.xp_amount || 0), 0);
+    const workoutRp = ledgerRows.reduce((s, r) => s + (r.rp_amount || 0), 0);
+    // Fallback if no ledger rows exist (legacy workouts): refund base XP + 40% RP
+    const effXpToRefund = workoutXp > 0 ? workoutXp : workout.xp_earned;
+    const effRpToRefund = workoutRp > 0 ? workoutRp : Math.round(workout.xp_earned * 0.4);
 
-  // 3) Delete the workout (cascades to ledger via FK)
-  db.prepare('DELETE FROM workouts WHERE id = ?').run(id);
+    // 2) Roll back daily challenge + weekly goal progress
+    rollbackDailyChallengeProgress(workout.exercise_type, workout.reps);
+    rollbackWeeklyGoalProgress(workout.exercise_type, workout.reps);
 
-  // 4) Refund the workout's XP and RP from user_stats
-  const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
-  const newTotalXP = Math.max(0, stats.total_xp - effXpToRefund);
-  const newLevel = calculateLevel(newTotalXP);
-  const newSeasonXP = Math.max(0, stats.season_xp - effRpToRefund);
-  const newRank = getRank(newSeasonXP);
+    // 3) Delete the workout (cascades to ledger via FK)
+    db.prepare('DELETE FROM workouts WHERE id = ?').run(idNum);
 
-  db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`)
-    .run(newTotalXP, newLevel, newSeasonXP, newRank);
+    // 4) Refund the workout's XP and RP from user_stats
+    const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
+    const newTotalXP = Math.max(0, stats.total_xp - effXpToRefund);
+    const newLevel = calculateLevel(newTotalXP);
+    const newSeasonXP = Math.max(0, stats.season_xp - effRpToRefund);
+    const newRank = getRank(newSeasonXP);
 
-  // 5) Recompute streak from remaining workouts
-  recomputeStreaks();
+    db.prepare(`UPDATE user_stats SET total_xp = ?, level = ?, season_xp = ?, current_rank = ? WHERE id = 1`)
+      .run(newTotalXP, newLevel, newSeasonXP, newRank);
 
-  // 6) Revoke any trophy no longer met. Correct revocation: check each
-  //    earned achievement's condition against CURRENT data, and if the
-  //    condition no longer holds, remove it and claw back its +50 RP.
-  const { revoked, refundsNeeded } = recheckAchievements();
-  if (refundsNeeded > 0) {
-    db.prepare('UPDATE user_stats SET season_xp = MAX(0, season_xp - ?) WHERE id = 1').run(refundsNeeded);
-    db.prepare('UPDATE user_stats SET current_rank = ? WHERE id = 1').run(getRank(db.prepare('SELECT season_xp FROM user_stats WHERE id=1').get().season_xp));
+    // 5) Recompute streak from remaining workouts
+    recomputeStreaks();
+
+    // 6) Revoke any trophy no longer met. Correct revocation: check each
+    //    earned achievement's condition against CURRENT data, and if the
+    //    condition no longer holds, remove it and claw back its +50 RP.
+    const { revoked, refundsNeeded } = recheckAchievements();
+    if (refundsNeeded > 0) {
+      db.prepare('UPDATE user_stats SET season_xp = MAX(0, season_xp - ?) WHERE id = 1').run(refundsNeeded);
+      db.prepare('UPDATE user_stats SET current_rank = ? WHERE id = 1').run(getRank(db.prepare('SELECT season_xp FROM user_stats WHERE id=1').get().season_xp));
+    }
+
+    return { notFound: false, effXpToRefund, effRpToRefund, revoked };
+  });
+
+  let result;
+  try {
+    result = tx();
+  } catch (err) {
+    console.error('[DELETE /api/workouts/:id] transaction failed:', err);
+    return res.status(500).json({ error: 'Failed to delete workout' });
+  }
+
+  if (result.notFound) {
+    return res.status(404).json({ error: 'Workout not found' });
   }
 
   res.json({
     success: true,
-    refunded: { xp: effXpToRefund, rp: effRpToRefund },
-    revokedAchievements: revoked
+    refunded: { xp: result.effXpToRefund, rp: result.effRpToRefund },
+    revokedAchievements: result.revoked
   });
 });
 
@@ -1549,28 +1596,53 @@ app.get('/api/program/:id', (req, res) => {
   res.json({ ...program, days });
 });
 
+// Helper: parse a positive integer path param. Returns null if invalid.
+function parsePositiveInt(v) {
+  const n = parseInt(v, 10);
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
+
 app.post('/api/program/:id/start', (req, res) => {
-  const { id } = req.params;
-  // Deactivate other programs
-  db.prepare('UPDATE programs SET active = 0').run();
-  // Activate this one
-  db.prepare('UPDATE programs SET active = 1, started_at = CURRENT_TIMESTAMP, current_day = 1 WHERE id = ?').run(id);
+  const programId = parsePositiveInt(req.params.id);
+  if (programId === null) return res.status(400).json({ error: 'Invalid program id' });
+  const tx = db.transaction(() => {
+    const program = db.prepare('SELECT id FROM programs WHERE id = ?').get(programId);
+    if (!program) return { notFound: true };
+    db.prepare('UPDATE programs SET active = 0').run();
+    db.prepare('UPDATE programs SET active = 1, started_at = CURRENT_TIMESTAMP, current_day = 1 WHERE id = ?').run(programId);
+    return { notFound: false };
+  });
+  let result;
+  try { result = tx(); } catch (err) {
+    console.error('[POST /api/program/:id/start] failed:', err);
+    return res.status(500).json({ error: 'Failed to start program' });
+  }
+  if (result.notFound) return res.status(404).json({ error: 'Program not found' });
   res.json({ success: true });
 });
 
 app.post('/api/program/:id/advance', (req, res) => {
-  const { id } = req.params;
-  const program = db.prepare('SELECT * FROM programs WHERE id = ?').get(id);
-  if (!program) return res.status(404).json({ error: 'Program not found' });
-  
-  const nextDay = program.current_day + 1;
-  if (nextDay > program.duration_days) {
-    db.prepare('UPDATE programs SET completed_at = CURRENT_TIMESTAMP, active = 0 WHERE id = ?').run(id);
-    return res.json({ success: true, completed: true });
+  const programId = parsePositiveInt(req.params.id);
+  if (programId === null) return res.status(400).json({ error: 'Invalid program id' });
+  const tx = db.transaction(() => {
+    const program = db.prepare('SELECT * FROM programs WHERE id = ?').get(programId);
+    if (!program) return { notFound: true };
+    const nextDay = program.current_day + 1;
+    if (nextDay > program.duration_days) {
+      db.prepare('UPDATE programs SET completed_at = CURRENT_TIMESTAMP, active = 0 WHERE id = ?').run(programId);
+      return { notFound: false, completed: true };
+    }
+    db.prepare('UPDATE programs SET current_day = ? WHERE id = ?').run(nextDay, programId);
+    return { notFound: false, completed: false, currentDay: nextDay };
+  });
+  let result;
+  try { result = tx(); } catch (err) {
+    console.error('[POST /api/program/:id/advance] failed:', err);
+    return res.status(500).json({ error: 'Failed to advance program' });
   }
-  
-  db.prepare('UPDATE programs SET current_day = ? WHERE id = ?').run(nextDay, id);
-  res.json({ success: true, currentDay: nextDay });
+  if (result.notFound) return res.status(404).json({ error: 'Program not found' });
+  if (result.completed) return res.json({ success: true, completed: true });
+  res.json({ success: true, currentDay: result.currentDay });
 });
 
 app.get('/api/perks', (req, res) => {
@@ -1579,32 +1651,47 @@ app.get('/api/perks', (req, res) => {
 });
 
 app.post('/api/perk/:id/activate', (req, res) => {
-  const { id } = req.params;
-  const perk = db.prepare('SELECT * FROM perks WHERE id = ?').get(id);
-  if (!perk) return res.status(404).json({ error: 'Perk not found' });
-  if (perk.used) return res.status(400).json({ error: 'Perk already used' });
+  const perkId = parsePositiveInt(req.params.id);
+  if (perkId === null) return res.status(400).json({ error: 'Invalid perk id' });
 
-  const now = new Date();
-  let expiresAt = null;
-  let extra = {};
+  const tx = db.transaction(() => {
+    const perk = db.prepare('SELECT * FROM perks WHERE id = ?').get(perkId);
+    if (!perk) return { notFound: true };
+    if (perk.used) return { alreadyUsed: true, perk };
 
-  if (perk.perk_type === 'xp_boost') {
-    expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-  } else if (perk.perk_type === 'rp_boost') {
-    expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-  } else if (perk.perk_type === 'streak_freeze') {
-    // Consume immediately: grant a streak-freeze credit
-    db.prepare('UPDATE user_stats SET streak_freeze_available = streak_freeze_available + 1 WHERE id = 1').run();
-    db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, used = 1 WHERE id = ?').run(id);
-    return res.json({ success: true, perk, effect: 'Streak freeze granted (1 missed day protected)' });
-  } else if (perk.perk_type === 'pack_drop') {
-    extra.pack = openApexPack();
-    db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, used = 1 WHERE id = ?').run(id);
-    return res.json({ success: true, perk, effect: 'Pack opened!', pack: extra.pack });
+    const now = new Date();
+    let expiresAt = null;
+
+    if (perk.perk_type === 'xp_boost') {
+      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    } else if (perk.perk_type === 'rp_boost') {
+      expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    } else if (perk.perk_type === 'streak_freeze') {
+      db.prepare('UPDATE user_stats SET streak_freeze_available = streak_freeze_available + 1 WHERE id = 1').run();
+      db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, used = 1 WHERE id = ?').run(perkId);
+      return { perk, effect: 'Streak freeze granted (1 missed day protected)' };
+    } else if (perk.perk_type === 'pack_drop') {
+      const pack = openApexPack();
+      db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, used = 1 WHERE id = ?').run(perkId);
+      return { perk, effect: 'Pack opened!', pack };
+    } else {
+      return { invalidType: true, perk };
+    }
+
+    db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, expires_at = ?, used = 1 WHERE id = ?').run(expiresAt, perkId);
+    return { perk, expiresAt };
+  });
+
+  let result;
+  try { result = tx(); } catch (err) {
+    console.error('[POST /api/perk/:id/activate] failed:', err);
+    return res.status(500).json({ error: 'Failed to activate perk' });
   }
 
-  db.prepare('UPDATE perks SET activated_at = CURRENT_TIMESTAMP, expires_at = ?, used = 1 WHERE id = ?').run(expiresAt, id);
-  res.json({ success: true, perk, expiresAt });
+  if (result.notFound) return res.status(404).json({ error: 'Perk not found' });
+  if (result.alreadyUsed) return res.status(400).json({ error: 'Perk already used' });
+  if (result.invalidType) return res.status(400).json({ error: `Unknown perk type: ${result.perk.perk_type}` });
+  res.json({ success: true, ...result });
 });
 
 app.get('/api/active-perks', (req, res) => {
@@ -1614,15 +1701,39 @@ app.get('/api/active-perks', (req, res) => {
 });
 
 app.post('/api/equip-item', (req, res) => {
-  const { itemId } = req.body;
-  db.prepare('UPDATE inventory SET equipped = 0').run();
-  db.prepare('UPDATE inventory SET equipped = 1 WHERE id = ?').run(itemId);
+  const itemId = parsePositiveInt(req.body && req.body.itemId);
+  if (itemId === null) return res.status(400).json({ error: 'itemId must be a positive integer' });
+  const tx = db.transaction(() => {
+    const item = db.prepare('SELECT id FROM inventory WHERE id = ?').get(itemId);
+    if (!item) return { notFound: true };
+    db.prepare('UPDATE inventory SET equipped = 0').run();
+    db.prepare('UPDATE inventory SET equipped = 1 WHERE id = ?').run(itemId);
+    return { ok: true };
+  });
+  let result;
+  try { result = tx(); } catch (err) {
+    console.error('[POST /api/equip-item] failed:', err);
+    return res.status(500).json({ error: 'Failed to equip item' });
+  }
+  if (result.notFound) return res.status(404).json({ error: 'Item not found' });
   res.json({ success: true });
 });
 
 app.post('/api/unequip-item', (req, res) => {
-  const { itemId } = req.body;
-  db.prepare('UPDATE inventory SET equipped = 0 WHERE id = ?').run(itemId);
+  const itemId = parsePositiveInt(req.body && req.body.itemId);
+  if (itemId === null) return res.status(400).json({ error: 'itemId must be a positive integer' });
+  const tx = db.transaction(() => {
+    const item = db.prepare('SELECT id FROM inventory WHERE id = ?').get(itemId);
+    if (!item) return { notFound: true };
+    db.prepare('UPDATE inventory SET equipped = 0 WHERE id = ?').run(itemId);
+    return { ok: true };
+  });
+  let result;
+  try { result = tx(); } catch (err) {
+    console.error('[POST /api/unequip-item] failed:', err);
+    return res.status(500).json({ error: 'Failed to unequip item' });
+  }
+  if (result.notFound) return res.status(404).json({ error: 'Item not found' });
   res.json({ success: true });
 });
 

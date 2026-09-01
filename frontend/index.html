@@ -1328,9 +1328,50 @@
             return '🥉';
         }
 
-        async function apiGet(endpoint) { return (await fetch(`${API_URL}${endpoint}`)).json(); }
-        async function apiPost(endpoint, data) { return (await fetch(`${API_URL}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })).json(); }
-        async function apiDelete(endpoint) { return (await fetch(`${API_URL}${endpoint}`, { method: 'DELETE' })).json(); }
+// Global error toast so the user sees when a request fails.
+        // Defined here so apiGet/apiPost/apiDelete can call it before showNotification exists.
+        function showErrorToast(message) {
+            try {
+                if (typeof window !== 'undefined' && typeof window.showNotification === 'function') {
+                    window.showNotification({ title: '⚠️ ' + (message || 'Network error'), type: 'error', icon: '⚠️', duration: 5000 });
+                    return;
+                }
+            } catch (e) { /* fall through to console */ }
+            console.error('[fitmaxxing] API error:', message);
+        }
+        window.showErrorToast = showErrorToast;
+
+        async function apiFetch(url, options = {}) {
+            let res;
+            try {
+                res = await fetch(url, options);
+            } catch (networkErr) {
+                // DNS failure, offline, CORS, etc.
+                console.error('[apiFetch] network failure for', url, networkErr);
+                showErrorToast('Network error — check your connection');
+                throw networkErr;
+            }
+            // Read body once as text, then try to parse JSON. Non-2xx -> error toast.
+            const text = await res.text();
+            let body = null;
+            if (text) {
+                try { body = JSON.parse(text); } catch (e) { body = { raw: text }; }
+            }
+            if (!res.ok) {
+                const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
+                console.error('[apiFetch]', res.status, url, msg);
+                showErrorToast(msg);
+                const err = new Error(msg);
+                err.status = res.status;
+                err.body = body;
+                throw err;
+            }
+            return body == null ? {} : body;
+        }
+
+        async function apiGet(endpoint) { return apiFetch(`${API_URL}${endpoint}`); }
+        async function apiPost(endpoint, data) { return apiFetch(`${API_URL}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); }
+        async function apiDelete(endpoint) { return apiFetch(`${API_URL}${endpoint}`, { method: 'DELETE' }); }
 
         async function loadStats() {
             userStats = await apiGet('/api/stats');
@@ -1485,7 +1526,7 @@
             const section = document.querySelector(`.quick-log-section.${cat}`);
             if (!section) return;
             const collapsed = section.classList.toggle('collapsed');
-            try { localStorage.setItem(`fm.quicklog.${cat}.collapsed`, collapsed ? '1' : '0'); } catch (e) {}
+            try { localStorage.setItem(`fm.quicklog.${cat}.collapsed`, collapsed ? '1' : '0'); } catch (e) { console.warn('[quicklog] localStorage setItem failed:', e); }
         }
 
         function toggleQuickLog() {
@@ -1540,7 +1581,13 @@
 
         async function quickLog(exerciseType, reps) {
             const ex = allExercises[exerciseType];
-            const data = await apiPost('/api/workouts', { exerciseType, reps, source: 'quick_log' });
+            let data;
+            try {
+                data = await apiPost('/api/workouts', { exerciseType, reps, source: 'quick_log' });
+            } catch (err) {
+                // apiFetch already toasted; bail without flashing the row
+                return;
+            }
             handleWorkoutResponse(data, `${reps} ${ex.unit}`);
             // Update local today summary so the row reflects it instantly
             const t = todaySummary[exerciseType] || { reps: 0, count: 0 };
@@ -1582,12 +1629,18 @@
         async function logSituation(situationId) {
             const situation = allSituations.find(s => s.id === situationId);
             if (!situation) return;
-            const data = await apiPost('/api/workouts', {
-                exerciseType: situation.exercise,
-                reps: situation.amount,
-                notes: `Apex: ${situation.text}`,
-                source: 'apex_situation'
-            });
+            let data;
+            try {
+                data = await apiPost('/api/workouts', {
+                    exerciseType: situation.exercise,
+                    reps: situation.amount,
+                    notes: `Apex: ${situation.text}`,
+                    source: 'apex_situation'
+                });
+            } catch (err) {
+                // apiFetch already toasted
+                return;
+            }
             handleWorkoutResponse(data, situation.text);
         }
 
@@ -1764,15 +1817,21 @@
         }
 
         async function activatePerk(id) {
-            const res = await apiPost(`/api/perk/${id}/activate`, {});
-            if (res.success) showNotification('⚡ Perk activated!', 'success');
+            let res;
+            try {
+                res = await apiPost(`/api/perk/${id}/activate`, {});
+            } catch (err) {
+                // apiFetch already toasted
+                return;
+            }
+            if (res.success) showNotification({ title: '⚡ Perk activated!', type: 'success', icon: '⚡' });
             loadPerks();
         }
 
         async function loadAchievements() {
             const [unlocked, progress] = await Promise.all([
                 apiGet('/api/achievements'),
-                apiGet('/api/achievements/progress').catch(() => ({}))
+                apiGet('/api/achievements/progress').catch(err => { console.warn('[achievements] progress fetch failed, falling back to empty:', err); return {}; })
             ]);
             const unlockedKeys = new Set(unlocked.map(a => a.achievement_key));
             const allAchievements = [
@@ -2020,7 +2079,13 @@
         }
 
         async function deleteWorkout(id) {
-            const res = await apiDelete(`/api/workouts/${id}`);
+            let res;
+            try {
+                res = await apiDelete(`/api/workouts/${id}`);
+            } catch (err) {
+                // apiFetch already toasted
+                return;
+            }
             if (res && res.success) {
                 const parts = [`-${res.refunded.xp} XP`, `-${res.refunded.rp} RP`];
                 if (res.revokedAchievements && res.revokedAchievements.length > 0) {
@@ -2185,12 +2250,18 @@
         }
 
         initTheme();
-        loadStats().then(() => { if (userStats.season) lastKnownSeasonId = userStats.season.id; });
-        loadQuickLog();
-        loadSituations();
-        loadDailyChallenges();
-        loadWeeklyGoal();
-        loadLegends();
+        // Wrap top-level init loads in .catch() so one failed endpoint
+        // (e.g. /api/stats 500) doesn't take down the rest of the dashboard.
+        // Each apiGet already toasts on its own failure — we just stop the
+        // unhandled promise rejection from propagating.
+        loadStats()
+            .then(() => { if (userStats.season) lastKnownSeasonId = userStats.season.id; })
+            .catch(err => { console.warn('[init] loadStats failed:', err); });
+        loadQuickLog().catch(err => { console.warn('[init] loadQuickLog failed:', err); });
+        loadSituations().catch(err => { console.warn('[init] loadSituations failed:', err); });
+        loadDailyChallenges().catch(err => { console.warn('[init] loadDailyChallenges failed:', err); });
+        loadWeeklyGoal().catch(err => { console.warn('[init] loadWeeklyGoal failed:', err); });
+        loadLegends().catch(err => { console.warn('[init] loadLegends failed:', err); });
     </script>
 </body>
 </html>

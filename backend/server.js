@@ -442,7 +442,7 @@ function generateDailyChallenges() {
   const pushupTemplates = DAILY_CHALLENGE_TEMPLATES.filter(t => t.type === 'pushups');
   const guaranteedPushup = pushupTemplates[Math.floor(Math.random() * pushupTemplates.length)];
 
-  const otherTemplates = DAILY_CHALLENGE_TEMPLATES.filter(t => t.key !== guaranteedPushup.key);
+  const otherTemplates = DAILY_CHALLENGE_TEMPLATES.filter(t => t.type !== 'pushups');
   const shuffled = [...otherTemplates].sort(() => Math.random() - 0.5);
   const selected = [guaranteedPushup, ...shuffled.slice(0, 2)];
 

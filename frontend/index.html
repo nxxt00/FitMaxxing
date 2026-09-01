@@ -1378,7 +1378,9 @@
             document.getElementById('totalXP').textContent = userStats.total_xp;
             document.getElementById('currentStreak').textContent = userStats.current_streak;
             document.getElementById('packsOpened').textContent = userStats.packs_opened;
-            document.getElementById('progressText').textContent = `${userStats.xpInCurrentLevel}/500 XP`;
+            // Use actual level threshold (xpForNextLevel - xpInCurrentLevel) instead of hardcoded 500
+            const xpNeededThisLevel = userStats.xpForNextLevel - (userStats.total_xp - userStats.xpInCurrentLevel);
+            document.getElementById('progressText').textContent = `${userStats.xpInCurrentLevel}/${xpNeededThisLevel} XP`;
             document.getElementById('progressFill').style.width = `${userStats.progressPercent}%`;
             document.getElementById('rankName').textContent = userStats.current_rank;
             document.getElementById('rankIcon').textContent = getRankIcon(userStats.current_rank);

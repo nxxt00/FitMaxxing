@@ -1456,7 +1456,7 @@
                         <div class="quick-log-buttons">
                             ${presets.map(p => `<button class="preset-btn" onclick="quickLog('${key}', ${p.value})">${p.label}</button>`).join('')}
                         </div>
-                        <button class="info-btn" onclick="jumpToHowTo('${key}')" title="Watch tutorial">i</button>
+                        <button class="info-btn" onclick="openVideoModal('${key}')" title="Watch video">i</button>
                     </div>
                 `;
             };
@@ -1488,27 +1488,7 @@
 
         function toggleQuickLog() {
             const sidebar = document.querySelector('.sidebar-left');
-            const btn = document.getElementById('quickLogToggle');
-            const collapsed = sidebar.classList.toggle('quick-log-collapsed');
-            btn.classList.toggle('expanded', !collapsed);
-            btn.textContent = collapsed ? 'All ▾' : 'Less ▴';
-            try { localStorage.setItem('fm.quicklog.expanded', collapsed ? '0' : '1'); } catch (e) {}
-        }
-
-        function applyQuickLogCollapsed() {
-            let expanded = '0';
-            try { expanded = localStorage.getItem('fm.quicklog.expanded') || '0'; } catch (e) {}
-            const sidebar = document.querySelector('.sidebar-left');
-            const btn = document.getElementById('quickLogToggle');
-            if (expanded === '1') {
-                sidebar.classList.remove('quick-log-collapsed');
-                btn.classList.add('expanded');
-                btn.textContent = 'Less ▴';
-            } else {
-                sidebar.classList.add('quick-log-collapsed');
-                btn.classList.remove('expanded');
-                btn.textContent = 'All ▾';
-            }
+            sidebar.classList.toggle('quick-log-collapsed');
         }
 
         function openVideoModal(exerciseType) {

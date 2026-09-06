@@ -916,6 +916,23 @@ function rollbackWeeklyGoalProgress(exerciseType, reps) {
   db.prepare('UPDATE weekly_goals SET progress = ?, completed = ? WHERE id = ?').run(newProgress, isComplete ? 1 : 0, goal.id);
 }
 
+// Reconcile current_streak against last_workout_date without touching longest_streak.
+// If the user missed a day, current_streak should be 0 — otherwise it stays at its stored
+// value (preserves the displayed streak between same-day workouts).
+// Called on read from /api/stats so a stale streak never lingers after a missed day.
+function reconcileStreakOnRead() {
+  const stats = db.prepare('SELECT current_streak, last_workout_date, longest_streak FROM user_stats WHERE id = 1').get();
+  if (!stats || !stats.last_workout_date) return;
+  const today = new Date().toISOString().split('T')[0];
+  const last = stats.last_workout_date;
+  if (last >= today) return; // already worked out today, streak is intact
+  const daysMissed = Math.floor((new Date(today + 'T00:00:00') - new Date(last + 'T00:00:00')) / (1000 * 60 * 60 * 24));
+  if (daysMissed <= 1) return; // yesterday or today — streak survives
+  // User missed at least one full day → streak is broken
+  if (stats.current_streak === 0) return; // already zero, no-op
+  db.prepare('UPDATE user_stats SET current_streak = 0 WHERE id = 1').run();
+}
+
 // Recompute current + longest streak from remaining workouts
 function recomputeStreaks() {
   const dateRows = db.prepare("SELECT DISTINCT strftime('%Y-%m-%d', created_at) as d FROM workouts ORDER BY d DESC").all();
@@ -1324,6 +1341,8 @@ app.delete('/api/workouts/:id', (req, res) => {
 app.get('/api/stats', (req, res) => {
   // Touch the season system first so it can auto-roll if expired
   const season = getActiveSeason();
+  // Reconcile streak: if the user missed a day, current_streak should read as 0
+  reconcileStreakOnRead();
   const stats = db.prepare('SELECT * FROM user_stats WHERE id = 1').get();
   const xpToNext = xpToReachLevel(stats.level + 1);
   const xpFloor = xpToReachLevel(stats.level);

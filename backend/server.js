@@ -217,6 +217,13 @@ if (!ledgerColumnNames.has('rp_amount')) {
   db.exec("ALTER TABLE workout_rp_ledger ADD COLUMN rp_amount INTEGER DEFAULT 0");
 }
 
+const weeklyGoalsColumns = db.prepare("PRAGMA table_info(weekly_goals)").all();
+const weeklyGoalsColumnNames = new Set(weeklyGoalsColumns.map(c => c.name));
+if (!weeklyGoalsColumnNames.has('xp_reward')) {
+  console.log('Migrating weekly_goals: adding xp_reward column');
+  db.exec("ALTER TABLE weekly_goals ADD COLUMN xp_reward INTEGER DEFAULT 0");
+}
+
 db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, highest_streak_ever, selected_legend, season_xp, current_rank, highest_rank_ever, packs_opened, streak_freeze_available) VALUES (1, 0, 0, 0, 0, 0, ?, 0, ?, ?, 0, 0)').run('wraith', 'Bronze IV', 'Bronze IV');
 
 // Rank thresholds

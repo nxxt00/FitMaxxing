@@ -32,11 +32,13 @@ db.exec(`
     level INTEGER DEFAULT 0,
     current_streak INTEGER DEFAULT 0,
     longest_streak INTEGER DEFAULT 0,
+    highest_streak_ever INTEGER DEFAULT 0,
     last_workout_date DATE,
     streak_freeze_available INTEGER DEFAULT 0,
     selected_legend TEXT DEFAULT 'wraith',
     season_xp INTEGER DEFAULT 0,
     current_rank TEXT DEFAULT 'Bronze IV',
+    highest_rank_ever TEXT DEFAULT 'Bronze IV',
     packs_opened INTEGER DEFAULT 0,
     current_season_id INTEGER
   );
@@ -162,7 +164,9 @@ const userMigrations = [
   { name: 'packs_opened', sql: 'ALTER TABLE user_stats ADD COLUMN packs_opened INTEGER DEFAULT 0' },
   { name: 'streak_freeze_available', sql: 'ALTER TABLE user_stats ADD COLUMN streak_freeze_available INTEGER DEFAULT 0' },
   { name: 'legend_week_start', sql: 'ALTER TABLE user_stats ADD COLUMN legend_week_start TEXT' },
-  { name: 'current_season_id', sql: 'ALTER TABLE user_stats ADD COLUMN current_season_id INTEGER' }
+  { name: 'current_season_id', sql: 'ALTER TABLE user_stats ADD COLUMN current_season_id INTEGER' },
+  { name: 'highest_streak_ever', sql: 'ALTER TABLE user_stats ADD COLUMN highest_streak_ever INTEGER DEFAULT 0' },
+  { name: 'highest_rank_ever', sql: "ALTER TABLE user_stats ADD COLUMN highest_rank_ever TEXT DEFAULT 'Bronze IV'" }
 ];
 
 userMigrations.forEach(m => {
@@ -213,7 +217,7 @@ if (!ledgerColumnNames.has('rp_amount')) {
   db.exec("ALTER TABLE workout_rp_ledger ADD COLUMN rp_amount INTEGER DEFAULT 0");
 }
 
-db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, selected_legend, season_xp, current_rank, packs_opened, streak_freeze_available) VALUES (1, 0, 0, 0, 0, ?, 0, ?, 0, 0)').run('wraith', 'Bronze IV');
+db.prepare('INSERT OR IGNORE INTO user_stats (id, total_xp, level, current_streak, longest_streak, highest_streak_ever, selected_legend, season_xp, current_rank, highest_rank_ever, packs_opened, streak_freeze_available) VALUES (1, 0, 0, 0, 0, 0, ?, 0, ?, ?, 0, 0)').run('wraith', 'Bronze IV', 'Bronze IV');
 
 // Rank thresholds
 const RANK_TIERS = [
@@ -263,6 +267,11 @@ function getRankProgress(seasonXP) {
     needed: needed,
     percent: Math.round((progress / needed) * 100)
   };
+}
+
+function getRankTierIndex(rankName) {
+  const rankData = RANK_TIERS.find(r => r.name === rankName);
+  return rankData ? RANK_TIERS.indexOf(rankData) : 0;
 }
 
 // === Season system ===
@@ -1155,6 +1164,12 @@ app.post('/api/workouts', (req, res) => {
     let streakBonus = null;
     const oldLongestStreak = stats.longest_streak;
     const newLongestStreak = Math.max(stats.longest_streak, newStreak);
+    const newHighestStreakEver = Math.max(stats.highest_streak_ever || 0, newLongestStreak);
+
+    // Track highest rank ever - compare rank tiers
+    const currentRankTier = getRankTierIndex(stats.current_rank);
+    const newRankTier = getRankTierIndex(newRank);
+    const newHighestRankEver = newRankTier > currentRankTier ? newRank : stats.highest_rank_ever;
 
     if (newStreak === 7 && oldLongestStreak < 7) {
       totalRpGained += 50;
@@ -1171,9 +1186,9 @@ app.post('/api/workouts', (req, res) => {
     }
 
     db.prepare(`UPDATE user_stats SET
-      total_xp = ?, level = ?, current_streak = ?, longest_streak = ?,
-      last_workout_date = ?, season_xp = ?, current_rank = ?
-      WHERE id = 1`).run(newTotalXP, newLevel, newStreak, newLongestStreak, today, stats.season_xp + totalRpGained, newRank);
+      total_xp = ?, level = ?, current_streak = ?, longest_streak = ?, highest_streak_ever = ?,
+      last_workout_date = ?, season_xp = ?, current_rank = ?, highest_rank_ever = ?
+      WHERE id = 1`).run(newTotalXP, newLevel, newStreak, newLongestStreak, newHighestStreakEver, today, stats.season_xp + totalRpGained, newRank, newHighestRankEver);
 
     const newStats = { total_xp: newTotalXP, level: newLevel, current_streak: newStreak, current_rank: newRank };
     const achievements = checkAchievements({ exerciseType, reps }, newStats);
